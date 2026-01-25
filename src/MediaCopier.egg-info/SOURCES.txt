@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/MediaCopier.egg-info/PKG-INFO
+src/MediaCopier.egg-info/SOURCES.txt
+src/MediaCopier.egg-info/dependency_links.txt
+src/MediaCopier.egg-info/requires.txt
+src/MediaCopier.egg-info/top_level.txt
+src/mediacopier/__init__.py
+src/mediacopier/__main__.py
+src/mediacopier/app.py
+src/mediacopier/core/__init__.py
+src/mediacopier/ui/__init__.py
+src/mediacopier/ui/cli.py
+src/mediacopier/ui/window.py
+tests/test_cli.py
