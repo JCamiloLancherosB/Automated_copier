@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from mediacopier.ui.cli import run_cli
+from mediacopier.ui.window import run_window
 
 
 def main() -> None:
-    run_cli()
+    run_window()
 
 
 if __name__ == "__main__":
