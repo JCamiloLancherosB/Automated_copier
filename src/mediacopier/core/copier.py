@@ -6,11 +6,13 @@ This module provides the core copying functionality including:
 - Dry-run mode for planning without copying
 - Collision handling strategies
 - Progress callbacks and final reporting
+- Multiple organization modes with multiplatform folder sanitization
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from mediacopier.core.matcher import MatchResult
-from mediacopier.core.models import OrganizationMode
+from mediacopier.core.models import OrganizationMode, RequestedItemType
 
 
 class CollisionStrategy(Enum):
@@ -189,6 +191,95 @@ def generate_unique_filename(dest_path: Path, max_attempts: int = 10000) -> Path
     )
 
 
+# Constants for multiplatform path sanitization
+# Characters not allowed in Windows filenames
+WINDOWS_INVALID_CHARS = '<>:"/\\|?*'
+# Characters that are problematic on macOS/HFS+
+MACOS_INVALID_CHARS = ':'
+# Combined set for cross-platform compatibility
+INVALID_PATH_CHARS = set(WINDOWS_INVALID_CHARS + MACOS_INVALID_CHARS)
+# Windows reserved names (case-insensitive)
+WINDOWS_RESERVED_NAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+})
+
+# Pattern to detect year in movie names like "Movie Name (2023)" or "Movie Name 2023"
+MOVIE_YEAR_PATTERN = re.compile(r"^(.+?)\s*[\(\[]?(\d{4})[\)\]]?\s*$")
+
+
+def sanitize_folder_name(name: str, fallback: str = "Unknown") -> str:
+    """Sanitize a string for use as a folder name across Windows, macOS, and Linux.
+
+    This function ensures the folder name is valid on all major operating systems:
+    - Removes characters not allowed in Windows (<>:"/\\|?*)
+    - Removes characters not allowed in macOS (:)
+    - Handles Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+    - Removes leading/trailing dots and spaces
+    - Collapses multiple spaces
+    - Ensures the result is not empty
+
+    Args:
+        name: The original folder name to sanitize.
+        fallback: The fallback name to use if the result would be empty.
+
+    Returns:
+        A sanitized folder name safe for all platforms.
+    """
+    if not name:
+        return fallback
+
+    # Replace invalid characters with underscore
+    result = "".join(c if c not in INVALID_PATH_CHARS else "_" for c in name)
+
+    # Replace control characters (0-31) with underscore
+    result = "".join(c if ord(c) >= 32 else "_" for c in result)
+
+    # Remove leading/trailing dots and spaces (Windows doesn't allow trailing dots)
+    result = result.strip(". \t\n\r")
+
+    # Collapse multiple spaces/underscores
+    result = re.sub(r"[\s_]+", " ", result).strip()
+
+    # Check for Windows reserved names
+    if result.upper() in WINDOWS_RESERVED_NAMES:
+        result = f"{result}_folder"
+
+    # Also check reserved names with extensions (e.g., "CON.txt")
+    base_name = result.split(".")[0].upper()
+    if base_name in WINDOWS_RESERVED_NAMES:
+        result = f"_{result}"
+
+    # If result is empty, use fallback
+    if not result:
+        return fallback
+
+    return result
+
+
+def extract_movie_info(name: str) -> tuple[str, str | None]:
+    """Extract movie name and year from a string.
+
+    Handles formats like:
+    - "Movie Name (2023)"
+    - "Movie Name [2023]"
+    - "Movie Name 2023"
+
+    Args:
+        name: The original movie name/request text.
+
+    Returns:
+        Tuple of (movie_name, year) where year may be None if not found.
+    """
+    match = MOVIE_YEAR_PATTERN.match(name.strip())
+    if match:
+        movie_name = match.group(1).strip()
+        year = match.group(2)
+        return movie_name, year
+    return name.strip(), None
+
+
 def _compute_destination_path(
     source_path: str,
     dest_root: str,
@@ -197,6 +288,7 @@ def _compute_destination_path(
     genre: str | None = None,
     request_name: str | None = None,
     source_root: str | None = None,
+    item_type: RequestedItemType | None = None,
 ) -> Path:
     """Compute the destination path based on organization mode.
 
@@ -204,10 +296,11 @@ def _compute_destination_path(
         source_path: Path to the source file.
         dest_root: Root destination directory.
         organization_mode: How to organize files.
-        artist: Artist name for SCATTER_BY_ARTIST mode.
+        artist: Artist name for SCATTER_BY_ARTIST and SCATTER_BY_GENRE modes.
         genre: Genre name for SCATTER_BY_GENRE mode.
         request_name: Request name for FOLDER_PER_REQUEST mode.
         source_root: Source root for KEEP_RELATIVE mode.
+        item_type: Type of the requested item (used for movie detection).
 
     Returns:
         Full destination path.
@@ -220,28 +313,29 @@ def _compute_destination_path(
         return dest / filename
 
     elif organization_mode == OrganizationMode.SCATTER_BY_ARTIST:
-        subfolder = artist if artist else "Unknown Artist"
-        # Sanitize folder name
-        subfolder = "".join(c for c in subfolder if c.isalnum() or c in " -_").strip()
-        if not subfolder:
-            subfolder = "Unknown Artist"
+        subfolder = sanitize_folder_name(artist, fallback="Unknown Artist")
         return dest / subfolder / filename
 
     elif organization_mode == OrganizationMode.SCATTER_BY_GENRE:
-        subfolder = genre if genre else "Unknown Genre"
-        # Sanitize folder name
-        subfolder = "".join(c for c in subfolder if c.isalnum() or c in " -_").strip()
-        if not subfolder:
-            subfolder = "Unknown Genre"
-        return dest / subfolder / filename
+        # Genre/Artist/filename structure
+        genre_folder = sanitize_folder_name(genre, fallback="Unknown Genre")
+        artist_folder = sanitize_folder_name(artist, fallback="Unknown Artist")
+        return dest / genre_folder / artist_folder / filename
 
     elif organization_mode == OrganizationMode.FOLDER_PER_REQUEST:
-        subfolder = request_name if request_name else "Request"
-        # Sanitize folder name
-        subfolder = "".join(c for c in subfolder if c.isalnum() or c in " -_").strip()
-        if not subfolder:
-            subfolder = "Request"
-        return dest / subfolder / filename
+        # Check if this is a movie request to create Movies/<Name>/ or Movies/<Name> (<Year>)/
+        if item_type == RequestedItemType.MOVIE and request_name:
+            movie_name, year = extract_movie_info(request_name)
+            safe_movie_name = sanitize_folder_name(movie_name, fallback="Unknown Movie")
+            if year:
+                movie_folder = f"{safe_movie_name} ({year})"
+            else:
+                movie_folder = safe_movie_name
+            return dest / "Movies" / movie_folder / filename
+        else:
+            # Regular request folder
+            subfolder = sanitize_folder_name(request_name, fallback="Request")
+            return dest / subfolder / filename
 
     elif organization_mode == OrganizationMode.KEEP_RELATIVE:
         if source_root:
@@ -352,6 +446,7 @@ def build_copy_plan(
             genre = source_file.audio_meta.genre
 
         request_name = match_result.requested_item.texto_original
+        item_type = match_result.requested_item.tipo
 
         # Compute destination path
         file_dest = _compute_destination_path(
@@ -362,6 +457,7 @@ def build_copy_plan(
             genre=genre,
             request_name=request_name,
             source_root=source_root,
+            item_type=item_type,
         )
 
         file_size = source_file.tamano
