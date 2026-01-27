@@ -539,11 +539,21 @@ def match_single_item(
         # Check extension whitelist/blacklist by media type if rules provided
         if rules:
             ext = media_file.extension.lower()
+            # Helper to normalize extension (remove single leading dot)
+            ext_no_dot = ext[1:] if ext.startswith(".") else ext
             if media_file.tipo == MediaType.AUDIO:
                 # Check audio blacklist
                 if rules.extensiones_audio_bloqueadas:
                     blocked = [e.lower() for e in rules.extensiones_audio_bloqueadas]
-                    if ext in blocked or ext.lstrip(".") in blocked:
+                    blocked_normalized = []
+                    for b in blocked:
+                        blocked_normalized.append(b)
+                        # Also add version with/without leading dot
+                        if b.startswith("."):
+                            blocked_normalized.append(b[1:])
+                        else:
+                            blocked_normalized.append(f".{b}")
+                    if ext in blocked_normalized or ext_no_dot in blocked_normalized:
                         continue
                 # Check audio whitelist (if specified, only allow these)
                 if rules.extensiones_audio_permitidas:
@@ -555,7 +565,15 @@ def match_single_item(
                 # Check video blacklist
                 if rules.extensiones_video_bloqueadas:
                     blocked = [e.lower() for e in rules.extensiones_video_bloqueadas]
-                    if ext in blocked or ext.lstrip(".") in blocked:
+                    blocked_normalized = []
+                    for b in blocked:
+                        blocked_normalized.append(b)
+                        # Also add version with/without leading dot
+                        if b.startswith("."):
+                            blocked_normalized.append(b[1:])
+                        else:
+                            blocked_normalized.append(f".{b}")
+                    if ext in blocked_normalized or ext_no_dot in blocked_normalized:
                         continue
                 # Check video whitelist (if specified, only allow these)
                 if rules.extensiones_video_permitidas:
