@@ -415,6 +415,107 @@ class TestCopyRulesNewFields:
         assert restored.umbral_fuzzy == original.umbral_fuzzy
 
 
+class TestAdvancedRulesFields:
+    """Tests for advanced CopyRules fields (extension filtering, movie preferences)."""
+
+    def test_advanced_default_values(self) -> None:
+        """Test that advanced filtering default values are set correctly."""
+        rules = CopyRules()
+        assert rules.extensiones_audio_permitidas == []
+        assert rules.extensiones_audio_bloqueadas == []
+        assert rules.extensiones_video_permitidas == []
+        assert rules.extensiones_video_bloqueadas == []
+        assert rules.solo_mejor_match is False
+        assert rules.preferir_resolucion_alta is True
+        assert rules.codecs_preferidos == []
+        assert rules.tamano_max_mb == 0.0
+        assert rules.duracion_max_seg == 0.0
+
+    def test_validate_negative_max_size(self) -> None:
+        """Test validation fails for negative max size."""
+        rules = CopyRules(tamano_max_mb=-10.0)
+        with pytest.raises(ValidationError, match="tamano_max_mb no puede ser negativo"):
+            rules.validate()
+
+    def test_validate_negative_max_duration(self) -> None:
+        """Test validation fails for negative max duration."""
+        rules = CopyRules(duracion_max_seg=-100.0)
+        with pytest.raises(ValidationError, match="duracion_max_seg no puede ser negativa"):
+            rules.validate()
+
+    def test_advanced_fields_to_dict_from_dict_roundtrip(self) -> None:
+        """Test JSON roundtrip for advanced CopyRules fields."""
+        original = CopyRules(
+            extensiones_audio_permitidas=[".mp3", ".flac"],
+            extensiones_audio_bloqueadas=[".wma", ".aac"],
+            extensiones_video_permitidas=[".mkv", ".mp4"],
+            extensiones_video_bloqueadas=[".avi", ".wmv"],
+            solo_mejor_match=True,
+            preferir_resolucion_alta=True,
+            codecs_preferidos=["h264", "hevc", "x265"],
+            tamano_max_mb=5000.0,
+            duracion_max_seg=10800.0,
+        )
+        data = original.to_dict()
+        restored = CopyRules.from_dict(data)
+
+        assert restored.extensiones_audio_permitidas == original.extensiones_audio_permitidas
+        assert restored.extensiones_audio_bloqueadas == original.extensiones_audio_bloqueadas
+        assert restored.extensiones_video_permitidas == original.extensiones_video_permitidas
+        assert restored.extensiones_video_bloqueadas == original.extensiones_video_bloqueadas
+        assert restored.solo_mejor_match == original.solo_mejor_match
+        assert restored.preferir_resolucion_alta == original.preferir_resolucion_alta
+        assert restored.codecs_preferidos == original.codecs_preferidos
+        assert restored.tamano_max_mb == original.tamano_max_mb
+        assert restored.duracion_max_seg == original.duracion_max_seg
+
+    def test_exclusion_words_list(self) -> None:
+        """Test exclusion words list in rules."""
+        rules = CopyRules(
+            excluir_palabras=["sample", "trailer", "camrip", "low quality"]
+        )
+        assert "sample" in rules.excluir_palabras
+        assert "trailer" in rules.excluir_palabras
+        assert "camrip" in rules.excluir_palabras
+        assert "low quality" in rules.excluir_palabras
+
+    def test_full_advanced_rules_roundtrip(self) -> None:
+        """Test complete advanced rules configuration roundtrip."""
+        original = CopyRules(
+            excluir_palabras=["sample", "trailer", "camrip"],
+            extensiones_audio_permitidas=[".mp3", ".flac", ".wav"],
+            extensiones_video_permitidas=[".mkv", ".mp4"],
+            extensiones_video_bloqueadas=[".avi"],
+            solo_mejor_match=True,
+            preferir_resolucion_alta=True,
+            codecs_preferidos=["h264", "hevc"],
+            tamano_min_mb=10.0,
+            tamano_max_mb=5000.0,
+            duracion_min_seg=60.0,
+            duracion_max_seg=7200.0,
+            filtrar_por_tamano=True,
+            filtrar_por_duracion=True,
+        )
+        original.validate()  # Should not raise
+
+        data = original.to_dict()
+        restored = CopyRules.from_dict(data)
+        restored.validate()  # Should not raise
+
+        # Verify all fields match
+        assert restored.excluir_palabras == original.excluir_palabras
+        assert restored.extensiones_audio_permitidas == original.extensiones_audio_permitidas
+        assert restored.extensiones_video_permitidas == original.extensiones_video_permitidas
+        assert restored.extensiones_video_bloqueadas == original.extensiones_video_bloqueadas
+        assert restored.solo_mejor_match == original.solo_mejor_match
+        assert restored.preferir_resolucion_alta == original.preferir_resolucion_alta
+        assert restored.codecs_preferidos == original.codecs_preferidos
+        assert restored.tamano_min_mb == original.tamano_min_mb
+        assert restored.tamano_max_mb == original.tamano_max_mb
+        assert restored.duracion_min_seg == original.duracion_min_seg
+        assert restored.duracion_max_seg == original.duracion_max_seg
+
+
 class TestProfile:
     """Tests for Profile dataclass."""
 

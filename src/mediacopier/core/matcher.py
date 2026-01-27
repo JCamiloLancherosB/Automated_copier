@@ -54,6 +54,132 @@ BONUS_WORDS = frozenset({
     "original",
 })
 
+# Default exclusion words for filtering junk content
+DEFAULT_EXCLUSION_WORDS = frozenset({
+    "sample",
+    "trailer",
+    "camrip",
+    "cam",
+    "ts",
+    "telesync",
+    "screener",
+    "workprint",
+    "hdcam",
+    "low quality",
+    "lowquality",
+    "preview",
+    "promo",
+    "watermark",
+})
+
+# Resolution priority mapping (higher = better)
+RESOLUTION_PRIORITY = {
+    "2160p": 100,
+    "4k": 100,
+    "1080p": 80,
+    "1080i": 75,
+    "720p": 60,
+    "720i": 55,
+    "576p": 40,
+    "576i": 35,
+    "480p": 30,
+    "480i": 25,
+    "360p": 15,
+    "240p": 10,
+}
+
+# Resolution patterns for extraction from filenames
+RESOLUTION_PATTERN = re.compile(
+    r"\b(2160p|4k|1080p|1080i|720p|720i|576p|576i|480p|480i|360p|240p)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_resolution_from_name(name: str) -> str | None:
+    """Extract resolution from a filename or string.
+
+    Args:
+        name: The filename or text to analyze.
+
+    Returns:
+        Resolution string (e.g., "1080p") or None if not found.
+    """
+    match = RESOLUTION_PATTERN.search(name)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
+def get_resolution_score(resolution: str | None, width: int | None, height: int | None) -> int:
+    """Calculate a resolution score for quality comparison.
+
+    Args:
+        resolution: Resolution string from filename (e.g., "1080p").
+        width: Video width in pixels.
+        height: Video height in pixels.
+
+    Returns:
+        Resolution score (higher = better quality).
+    """
+    # First try from filename resolution
+    if resolution:
+        score = RESOLUTION_PRIORITY.get(resolution.lower(), 0)
+        if score > 0:
+            return score
+
+    # Fall back to video dimensions
+    if height is not None:
+        if height >= 2160:
+            return 100
+        elif height >= 1080:
+            return 80
+        elif height >= 720:
+            return 60
+        elif height >= 576:
+            return 40
+        elif height >= 480:
+            return 30
+        elif height >= 360:
+            return 15
+        elif height >= 240:
+            return 10
+
+    return 0
+
+
+def contains_exclusion_word(text: str, exclusion_words: list[str]) -> tuple[bool, str | None]:
+    """Check if text contains any exclusion word.
+
+    Uses case-insensitive word boundary matching to avoid partial matches.
+
+    Args:
+        text: Text to check for exclusion words.
+        exclusion_words: List of words/phrases to check for.
+
+    Returns:
+        Tuple of (contains_exclusion, matched_word) where matched_word is the
+        first exclusion word found, or None if no match.
+    """
+    if not exclusion_words:
+        return False, None
+
+    text_lower = text.lower()
+    for word in exclusion_words:
+        word_lower = word.strip().lower()
+        if not word_lower:
+            continue
+        # Use word boundary regex for single words, simple contains for phrases
+        if " " in word_lower:
+            # For phrases, use simple substring matching
+            if word_lower in text_lower:
+                return True, word
+        else:
+            # For single words, use word boundary matching
+            pattern = rf"\b{re.escape(word_lower)}\b"
+            if re.search(pattern, text_lower):
+                return True, word
+    return False, None
+
 
 def normalize_text(text: str) -> str:
     """Apply strong normalization for matching.
@@ -372,6 +498,7 @@ def match_single_item(
     catalog: MediaCatalog,
     threshold: float = 60.0,
     max_candidates: int = 10,
+    rules: CopyRules | None = None,
 ) -> MatchResult:
     """Match a single requested item against the catalog.
 
@@ -380,17 +507,63 @@ def match_single_item(
         catalog: Media catalog to search.
         threshold: Minimum similarity threshold (0-100).
         max_candidates: Maximum number of candidates to return.
+        rules: Optional copy rules for filtering by exclusion words.
 
     Returns:
         MatchResult with ranked candidates.
     """
+    from mediacopier.core.indexer import MediaType
+
     result = MatchResult(requested_item=item)
     requested_normalized = normalize_text(item.texto_original)
     requested_base = extract_base_name(item.texto_original)
 
+    # Get exclusion words from rules or use defaults
+    exclusion_words: list[str] = []
+    if rules and rules.excluir_palabras:
+        exclusion_words = rules.excluir_palabras
+    else:
+        exclusion_words = list(DEFAULT_EXCLUSION_WORDS)
+
     candidates: list[MatchCandidate] = []
 
     for media_file in catalog.archivos:
+        # Check exclusion words - skip files with junk content
+        if exclusion_words:
+            is_excluded, excluded_word = contains_exclusion_word(
+                media_file.nombre_base, exclusion_words
+            )
+            if is_excluded:
+                continue  # Skip this file, it contains an exclusion word
+
+        # Check extension whitelist/blacklist by media type if rules provided
+        if rules:
+            ext = media_file.extension.lower()
+            if media_file.tipo == MediaType.AUDIO:
+                # Check audio blacklist
+                if rules.extensiones_audio_bloqueadas:
+                    blocked = [e.lower() for e in rules.extensiones_audio_bloqueadas]
+                    if ext in blocked or ext.lstrip(".") in blocked:
+                        continue
+                # Check audio whitelist (if specified, only allow these)
+                if rules.extensiones_audio_permitidas:
+                    allowed = [e.lower() for e in rules.extensiones_audio_permitidas]
+                    allowed_normalized = [e if e.startswith(".") else f".{e}" for e in allowed]
+                    if ext not in allowed_normalized:
+                        continue
+            elif media_file.tipo == MediaType.VIDEO:
+                # Check video blacklist
+                if rules.extensiones_video_bloqueadas:
+                    blocked = [e.lower() for e in rules.extensiones_video_bloqueadas]
+                    if ext in blocked or ext.lstrip(".") in blocked:
+                        continue
+                # Check video whitelist (if specified, only allow these)
+                if rules.extensiones_video_permitidas:
+                    allowed = [e.lower() for e in rules.extensiones_video_permitidas]
+                    allowed_normalized = [e if e.startswith(".") else f".{e}" for e in allowed]
+                    if ext not in allowed_normalized:
+                        continue
+
         candidate_normalized = normalize_text(media_file.nombre_base)
         candidate_base = extract_base_name(media_file.nombre_base)
 
@@ -406,6 +579,45 @@ def match_single_item(
             media_file.nombre_base,
             item.tipo,
         )
+
+        # Apply movie quality scoring for MOVIE type
+        if item.tipo == RequestedItemType.MOVIE and rules:
+            resolution_from_name = extract_resolution_from_name(media_file.nombre_base)
+            video_width = None
+            video_height = None
+            video_codec = None
+
+            if media_file.video_meta:
+                video_width = media_file.video_meta.width
+                video_height = media_file.video_meta.height
+                video_codec = media_file.video_meta.codec
+
+            # Add resolution bonus if preferring high resolution
+            if rules.preferir_resolucion_alta:
+                res_score = get_resolution_score(resolution_from_name, video_width, video_height)
+                # Add bonus based on resolution (up to 10 points)
+                resolution_bonus = (res_score / 100.0) * 10
+                score += resolution_bonus
+                if res_score > 0:
+                    if resolution_from_name:
+                        res_str = resolution_from_name
+                    elif video_height:
+                        res_str = f"{video_height}p"
+                    else:
+                        res_str = "unknown"
+                    reason += f"; resolución: {res_str} (+{resolution_bonus:.1f})"
+
+            # Add codec preference bonus
+            if rules.codecs_preferidos and video_codec:
+                codec_lower = video_codec.lower()
+                for i, preferred in enumerate(rules.codecs_preferidos):
+                    if preferred.lower() in codec_lower:
+                        # Earlier in list = more preferred
+                        codec_bonus = 5 - (i * 0.5)  # 5, 4.5, 4, 3.5...
+                        codec_bonus = max(0, codec_bonus)
+                        score += codec_bonus
+                        reason += f"; codec preferido: {video_codec} (+{codec_bonus:.1f})"
+                        break
 
         if is_exact:
             score = max(score, 95.0)  # Exact matches get high base score
@@ -453,7 +665,7 @@ def match_items(
     Args:
         requested_items: List of items to match.
         catalog: Media catalog to search against.
-        rules: Optional copy rules for filtering (currently unused, for future extension).
+        rules: Optional copy rules for filtering and selection options.
         threshold: Minimum similarity threshold (0-100).
         max_candidates: Maximum number of candidates per item.
 
@@ -462,12 +674,18 @@ def match_items(
     """
     results: list[MatchResult] = []
 
+    # Determine effective max candidates based on rules
+    effective_max_candidates = max_candidates
+    if rules and rules.solo_mejor_match:
+        effective_max_candidates = 1
+
     for item in requested_items:
         result = match_single_item(
             item=item,
             catalog=catalog,
             threshold=threshold,
-            max_candidates=max_candidates,
+            max_candidates=effective_max_candidates,
+            rules=rules,
         )
         results.append(result)
 

@@ -548,3 +548,366 @@ class TestRapidfuzzFallback:
     def test_rapidfuzz_availability_flag(self) -> None:
         """Test that RAPIDFUZZ_AVAILABLE flag is a boolean."""
         assert isinstance(RAPIDFUZZ_AVAILABLE, bool)
+
+
+class TestExclusionWords:
+    """Tests for exclusion word filtering functionality."""
+
+    def test_contains_exclusion_word_single_word(self) -> None:
+        """Test detection of single exclusion words."""
+        from mediacopier.core.matcher import contains_exclusion_word
+
+        # Should detect 'sample'
+        result, word = contains_exclusion_word("Movie Sample 2023", ["sample"])
+        assert result is True
+        assert word == "sample"
+
+        # Should detect 'trailer'
+        result, word = contains_exclusion_word("Movie Trailer HD", ["sample", "trailer"])
+        assert result is True
+        assert word == "trailer"
+
+    def test_contains_exclusion_word_phrase(self) -> None:
+        """Test detection of multi-word phrases."""
+        from mediacopier.core.matcher import contains_exclusion_word
+
+        # Should detect 'low quality'
+        result, word = contains_exclusion_word("Movie low quality version", ["low quality"])
+        assert result is True
+        assert word == "low quality"
+
+    def test_contains_exclusion_word_no_partial_match(self) -> None:
+        """Test that partial words don't match."""
+        from mediacopier.core.matcher import contains_exclusion_word
+
+        # 'camrip' should not match 'camera'
+        result, _ = contains_exclusion_word("Camera Footage", ["camrip"])
+        assert result is False
+
+        # 'sample' should not match 'sampler'
+        result, _ = contains_exclusion_word("Music Sampler", ["sample"])
+        assert result is False
+
+    def test_contains_exclusion_word_case_insensitive(self) -> None:
+        """Test case-insensitive matching."""
+        from mediacopier.core.matcher import contains_exclusion_word
+
+        result, word = contains_exclusion_word("MOVIE SAMPLE 2023", ["sample"])
+        assert result is True
+
+        result, word = contains_exclusion_word("Movie TRAILER HD", ["trailer"])
+        assert result is True
+
+    def test_contains_exclusion_word_empty_list(self) -> None:
+        """Test with empty exclusion list."""
+        from mediacopier.core.matcher import contains_exclusion_word
+
+        result, word = contains_exclusion_word("Any Movie Name", [])
+        assert result is False
+        assert word is None
+
+    def test_exclusion_filters_in_match(self) -> None:
+        """Test that exclusion words filter out files during matching."""
+        from mediacopier.core.models import CopyRules
+
+        # Create catalog with some junk files
+        catalog = MediaCatalog(
+            archivos=[
+                MediaFile(
+                    path="/movies/Movie Name 1080p.mkv",
+                    nombre_base="Movie Name 1080p",
+                    extension=".mkv",
+                    tamano=5000000000,
+                    tipo=MediaType.VIDEO,
+                ),
+                MediaFile(
+                    path="/movies/Movie Name SAMPLE.mkv",
+                    nombre_base="Movie Name SAMPLE",
+                    extension=".mkv",
+                    tamano=500000,
+                    tipo=MediaType.VIDEO,
+                ),
+                MediaFile(
+                    path="/movies/Movie Name Trailer.mkv",
+                    nombre_base="Movie Name Trailer",
+                    extension=".mkv",
+                    tamano=100000,
+                    tipo=MediaType.VIDEO,
+                ),
+            ],
+            origenes=["/movies"],
+        )
+
+        item = RequestedItem(tipo=RequestedItemType.MOVIE, texto_original="Movie Name")
+
+        # With exclusion rules
+        rules = CopyRules(excluir_palabras=["sample", "trailer"])
+        result = match_single_item(item, catalog, rules=rules, threshold=50.0)
+
+        # Should only find the clean file
+        assert result.match_found is True
+        assert len(result.candidates) == 1
+        assert "1080p" in result.best_match.media_file.nombre_base
+
+
+class TestResolutionScoring:
+    """Tests for resolution scoring functionality."""
+
+    def test_extract_resolution_from_name(self) -> None:
+        """Test resolution extraction from filenames."""
+        from mediacopier.core.matcher import extract_resolution_from_name
+
+        assert extract_resolution_from_name("Movie Name 1080p.mkv") == "1080p"
+        assert extract_resolution_from_name("Movie Name 720p BluRay") == "720p"
+        assert extract_resolution_from_name("Movie 4K HDR") == "4k"
+        assert extract_resolution_from_name("Movie 2160p") == "2160p"
+        assert extract_resolution_from_name("Movie Name") is None
+
+    def test_get_resolution_score(self) -> None:
+        """Test resolution scoring."""
+        from mediacopier.core.matcher import get_resolution_score
+
+        # Test from filename resolution
+        assert get_resolution_score("1080p", None, None) == 80
+        assert get_resolution_score("720p", None, None) == 60
+        assert get_resolution_score("4k", None, None) == 100
+        assert get_resolution_score("480p", None, None) == 30
+
+        # Test from video dimensions
+        assert get_resolution_score(None, 1920, 1080) == 80
+        assert get_resolution_score(None, 1280, 720) == 60
+        assert get_resolution_score(None, 3840, 2160) == 100
+
+        # Test unknown resolution
+        assert get_resolution_score(None, None, None) == 0
+
+    def test_higher_resolution_preferred(self) -> None:
+        """Test that resolution adds bonus to score for movies."""
+        from mediacopier.core.models import CopyRules
+        from mediacopier.core.metadata_video import VideoMeta
+
+        # Create catalog with identical names but different resolutions (via metadata)
+        catalog = MediaCatalog(
+            archivos=[
+                MediaFile(
+                    path="/movies/Movie.480p.mkv",
+                    nombre_base="Movie",
+                    extension=".mkv",
+                    tamano=500000000,
+                    tipo=MediaType.VIDEO,
+                    video_meta=VideoMeta(width=720, height=480),
+                ),
+                MediaFile(
+                    path="/movies/Movie.720p.mkv",
+                    nombre_base="Movie",
+                    extension=".mkv",
+                    tamano=1500000000,
+                    tipo=MediaType.VIDEO,
+                    video_meta=VideoMeta(width=1280, height=720),
+                ),
+                MediaFile(
+                    path="/movies/Movie.1080p.mkv",
+                    nombre_base="Movie",
+                    extension=".mkv",
+                    tamano=3000000000,
+                    tipo=MediaType.VIDEO,
+                    video_meta=VideoMeta(width=1920, height=1080),
+                ),
+            ],
+            origenes=["/movies"],
+        )
+
+        item = RequestedItem(tipo=RequestedItemType.MOVIE, texto_original="Movie")
+
+        # With resolution preference enabled
+        rules = CopyRules(preferir_resolucion_alta=True, excluir_palabras=[])
+        result = match_single_item(item, catalog, rules=rules, threshold=50.0)
+
+        # Should find matches
+        assert result.match_found is True
+        assert len(result.candidates) == 3
+
+        # 1080p should have highest score among candidates
+        scores = {
+            c.media_file.video_meta.height: c.score
+            for c in result.candidates
+            if c.media_file.video_meta and c.media_file.video_meta.height
+        }
+
+        # Higher resolution should have higher score
+        assert scores.get(1080, 0) > scores.get(720, 0)
+        assert scores.get(720, 0) > scores.get(480, 0)
+
+
+class TestBestMatchSelection:
+    """Tests for solo_mejor_match option."""
+
+    def test_solo_mejor_match_returns_one_candidate(self) -> None:
+        """Test that solo_mejor_match returns only the best match."""
+        from mediacopier.core.models import CopyRules
+
+        # Create catalog with multiple similar files
+        catalog = MediaCatalog(
+            archivos=[
+                MediaFile(
+                    path="/music/Song Name.mp3",
+                    nombre_base="Song Name",
+                    extension=".mp3",
+                    tamano=5000000,
+                    tipo=MediaType.AUDIO,
+                ),
+                MediaFile(
+                    path="/music/Song Name (Remastered).mp3",
+                    nombre_base="Song Name (Remastered)",
+                    extension=".mp3",
+                    tamano=5000000,
+                    tipo=MediaType.AUDIO,
+                ),
+                MediaFile(
+                    path="/music/Song Name (Live).mp3",
+                    nombre_base="Song Name (Live)",
+                    extension=".mp3",
+                    tamano=5000000,
+                    tipo=MediaType.AUDIO,
+                ),
+            ],
+            origenes=["/music"],
+        )
+
+        items = [RequestedItem(tipo=RequestedItemType.SONG, texto_original="Song Name")]
+
+        # Without solo_mejor_match - should return multiple candidates
+        rules_all = CopyRules(solo_mejor_match=False, excluir_palabras=[])
+        results_all = match_items(items, catalog, rules=rules_all, threshold=50.0)
+        assert len(results_all[0].candidates) > 1
+
+        # With solo_mejor_match - should return only 1 candidate
+        rules_best = CopyRules(solo_mejor_match=True, excluir_palabras=[])
+        results_best = match_items(items, catalog, rules=rules_best, threshold=50.0)
+        assert len(results_best[0].candidates) == 1
+
+
+class TestExtensionFiltering:
+    """Tests for extension whitelist/blacklist by media type."""
+
+    def test_audio_extension_whitelist(self) -> None:
+        """Test audio extension whitelist filtering."""
+        from mediacopier.core.models import CopyRules
+
+        catalog = MediaCatalog(
+            archivos=[
+                MediaFile(
+                    path="/music/song.mp3",
+                    nombre_base="Song Name",
+                    extension=".mp3",
+                    tamano=5000000,
+                    tipo=MediaType.AUDIO,
+                ),
+                MediaFile(
+                    path="/music/song.flac",
+                    nombre_base="Song Name",
+                    extension=".flac",
+                    tamano=50000000,
+                    tipo=MediaType.AUDIO,
+                ),
+                MediaFile(
+                    path="/music/song.wav",
+                    nombre_base="Song Name",
+                    extension=".wav",
+                    tamano=100000000,
+                    tipo=MediaType.AUDIO,
+                ),
+            ],
+            origenes=["/music"],
+        )
+
+        item = RequestedItem(tipo=RequestedItemType.SONG, texto_original="Song Name")
+
+        # Only allow mp3 and flac
+        rules = CopyRules(
+            extensiones_audio_permitidas=[".mp3", ".flac"],
+            excluir_palabras=[],
+        )
+        result = match_single_item(item, catalog, rules=rules, threshold=50.0)
+
+        # Should only match mp3 and flac, not wav
+        extensions = [c.media_file.extension for c in result.candidates]
+        assert ".mp3" in extensions
+        assert ".flac" in extensions
+        assert ".wav" not in extensions
+
+    def test_audio_extension_blacklist(self) -> None:
+        """Test audio extension blacklist filtering."""
+        from mediacopier.core.models import CopyRules
+
+        catalog = MediaCatalog(
+            archivos=[
+                MediaFile(
+                    path="/music/song.mp3",
+                    nombre_base="Song Name",
+                    extension=".mp3",
+                    tamano=5000000,
+                    tipo=MediaType.AUDIO,
+                ),
+                MediaFile(
+                    path="/music/song.wma",
+                    nombre_base="Song Name",
+                    extension=".wma",
+                    tamano=5000000,
+                    tipo=MediaType.AUDIO,
+                ),
+            ],
+            origenes=["/music"],
+        )
+
+        item = RequestedItem(tipo=RequestedItemType.SONG, texto_original="Song Name")
+
+        # Block wma files
+        rules = CopyRules(
+            extensiones_audio_bloqueadas=[".wma"],
+            excluir_palabras=[],
+        )
+        result = match_single_item(item, catalog, rules=rules, threshold=50.0)
+
+        # Should only match mp3, not wma
+        extensions = [c.media_file.extension for c in result.candidates]
+        assert ".mp3" in extensions
+        assert ".wma" not in extensions
+
+    def test_video_extension_filtering(self) -> None:
+        """Test video extension whitelist/blacklist filtering."""
+        from mediacopier.core.models import CopyRules
+
+        catalog = MediaCatalog(
+            archivos=[
+                MediaFile(
+                    path="/movies/movie.mkv",
+                    nombre_base="Movie Name",
+                    extension=".mkv",
+                    tamano=5000000000,
+                    tipo=MediaType.VIDEO,
+                ),
+                MediaFile(
+                    path="/movies/movie.avi",
+                    nombre_base="Movie Name",
+                    extension=".avi",
+                    tamano=3000000000,
+                    tipo=MediaType.VIDEO,
+                ),
+            ],
+            origenes=["/movies"],
+        )
+
+        item = RequestedItem(tipo=RequestedItemType.MOVIE, texto_original="Movie Name")
+
+        # Only allow mkv
+        rules = CopyRules(
+            extensiones_video_permitidas=[".mkv"],
+            excluir_palabras=[],
+        )
+        result = match_single_item(item, catalog, rules=rules, threshold=50.0)
+
+        # Should only match mkv
+        extensions = [c.media_file.extension for c in result.candidates]
+        assert ".mkv" in extensions
+        assert ".avi" not in extensions
