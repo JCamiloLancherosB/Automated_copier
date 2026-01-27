@@ -48,11 +48,15 @@ class MediaCopierLogger:
     # Log message format
     LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
+    # Maximum log entries to keep in memory (to avoid memory issues)
+    MAX_LOG_ENTRIES = 100000
+
     def __init__(
         self,
         name: str = "mediacopier",
         level: LogLevel = LogLevel.INFO,
         log_file: str | Path | None = None,
+        max_entries: int | None = None,
     ) -> None:
         """Initialize the logger.
 
@@ -60,6 +64,7 @@ class MediaCopierLogger:
             name: Logger name identifier.
             level: Minimum log level to capture.
             log_file: Optional path to write logs to a file.
+            max_entries: Maximum entries to keep in memory. Defaults to MAX_LOG_ENTRIES.
         """
         self._logger = logging.getLogger(name)
         self._logger.setLevel(level.value)
@@ -82,8 +87,9 @@ class MediaCopierLogger:
         if log_file:
             self.set_log_file(log_file)
 
-        # Track log entries for export
+        # Track log entries for export with configurable limit
         self._log_entries: list[str] = []
+        self._max_entries = max_entries if max_entries is not None else self.MAX_LOG_ENTRIES
 
     def set_log_file(self, log_file: str | Path) -> None:
         """Set or change the log file path.
@@ -131,6 +137,12 @@ class MediaCopierLogger:
         """
         entry = self._format_entry(level.name, message)
         self._log_entries.append(entry)
+
+        # Enforce max entries limit to prevent memory issues
+        if len(self._log_entries) > self._max_entries:
+            # Remove oldest entries (keep last max_entries)
+            self._log_entries = self._log_entries[-self._max_entries:]
+
         self._logger.log(level.value, message)
 
     def debug(self, message: str) -> None:

@@ -21,7 +21,15 @@ from mediacopier.core.matcher import MatchResult
 
 
 class FileOperationStatus(Enum):
-    """Status of a file operation in the report."""
+    """Status of a file operation in the report.
+
+    - COPIED: File was successfully copied
+    - SKIPPED: File was skipped due to collision (exists, same size, same hash)
+    - FILTERED: File was filtered out by rules (extension, size, duration, excluded words)
+                Note: FILTERED is used when files don't make it into the copy plan.
+                This typically happens during matching/indexing, not during copy execution.
+    - FAILED: File copy failed due to an error
+    """
 
     COPIED = "COPIED"
     SKIPPED = "SKIPPED"
@@ -365,6 +373,25 @@ class JobReport:
             "reason": error_message,
         })
 
+    def add_filtered_file(self, source_path: str, reason: str, size_bytes: int = 0) -> None:
+        """Add a filtered file to the report.
+
+        This is a convenience method for reporting files that were filtered out
+        during matching/indexing (before the copy plan was created).
+
+        Args:
+            source_path: Path of the file that was filtered.
+            reason: Reason for filtering (e.g., "Extension not allowed", "Size too small").
+            size_bytes: File size in bytes.
+        """
+        self.add_operation(
+            source_path=source_path,
+            dest_path=None,
+            status=FileOperationStatus.FILTERED,
+            reason=reason,
+            size_bytes=size_bytes,
+        )
+
     def set_start_time(self) -> None:
         """Set the start time to now."""
         self.start_time = datetime.now().isoformat()
@@ -463,19 +490,26 @@ def create_job_report_from_plan_and_result(
         if item.source in error_dict:
             status = FileOperationStatus.FAILED
             reason = error_dict[item.source]
-        elif item.action == CopyItemAction.COPY or item.action == CopyItemAction.RENAME_COPY:
+        elif item.action == CopyItemAction.COPY:
             status = FileOperationStatus.COPIED
             reason = item.reason or ""
-        elif item.action in (
-            CopyItemAction.SKIP_EXISTS,
-            CopyItemAction.SKIP_SAME_SIZE,
-            CopyItemAction.SKIP_SAME_HASH,
-        ):
+        elif item.action == CopyItemAction.RENAME_COPY:
+            status = FileOperationStatus.COPIED
+            reason = item.reason or "renamed due to collision"
+        elif item.action == CopyItemAction.SKIP_EXISTS:
             status = FileOperationStatus.SKIPPED
             reason = item.reason or "File already exists"
+        elif item.action == CopyItemAction.SKIP_SAME_SIZE:
+            status = FileOperationStatus.SKIPPED
+            reason = item.reason or "Same size as existing file"
+        elif item.action == CopyItemAction.SKIP_SAME_HASH:
+            status = FileOperationStatus.SKIPPED
+            reason = item.reason or "Same hash as existing file"
         else:
-            status = FileOperationStatus.FILTERED
-            reason = item.reason or ""
+            # Unknown action - log as warning but don't fail
+            # This could happen if new actions are added
+            status = FileOperationStatus.SKIPPED
+            reason = item.reason or f"Unknown action: {item.action.value}"
 
         report.add_operation(
             source_path=item.source,

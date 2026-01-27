@@ -223,6 +223,16 @@ class TestJobReport:
         assert report.errors[0]["source_name"] == "bad_file.mp3"
         assert report.errors[0]["reason"] == "Permission denied"
 
+    def test_add_filtered_file(self) -> None:
+        """Test adding filtered files to the report."""
+        report = JobReport(job_id="job-filter", job_name="Filter Test")
+        report.add_filtered_file("/src/file.txt", "Extension not allowed", size_bytes=512)
+
+        assert len(report.operations) == 1
+        assert report.operations[0].status == FileOperationStatus.FILTERED
+        assert report.operations[0].reason == "Extension not allowed"
+        assert report.summary.filtered == 1
+
     def test_set_start_and_end_time(self) -> None:
         """Test setting start and end times."""
         report = JobReport(job_id="job-005", job_name="Time Test")

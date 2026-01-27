@@ -183,6 +183,21 @@ class TestMediaCopierLogger:
         assert len(logger.get_log_entries()) == 0
         logger.close()
 
+    def test_max_entries_limit(self) -> None:
+        """Test that log entries are limited to prevent memory issues."""
+        logger = MediaCopierLogger(name="test_max_entries", max_entries=5)
+
+        # Log more than max entries
+        for i in range(10):
+            logger.info(f"Message {i}")
+
+        entries = logger.get_log_entries()
+        # Should only have the last 5 entries
+        assert len(entries) == 5
+        assert "Message 5" in entries[0]
+        assert "Message 9" in entries[-1]
+        logger.close()
+
     def test_set_log_file(self, tmp_path: Path) -> None:
         """Test setting log file."""
         logger = MediaCopierLogger(name="test_set_file")
