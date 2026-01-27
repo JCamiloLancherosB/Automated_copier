@@ -10,6 +10,8 @@ from mediacopier.core.models import (
     CopyRules,
     CopyStats,
     OrganizationMode,
+    Profile,
+    ProfileManager,
     RequestedItem,
     RequestedItemType,
     ValidationError,
@@ -357,3 +359,255 @@ class TestRequestedItemTypeEnum:
         assert RequestedItemType.GENRE.value == "genre"
         assert RequestedItemType.ARTIST.value == "artist"
         assert RequestedItemType.FOLDER.value == "folder"
+
+
+class TestCopyRulesNewFields:
+    """Tests for new CopyRules fields."""
+
+    def test_new_default_values(self) -> None:
+        """Test that new default values are set correctly."""
+        rules = CopyRules()
+        assert rules.filtrar_por_tamano is False
+        assert rules.filtrar_por_duracion is False
+        assert rules.solo_extensiones_seleccionadas is False
+        assert rules.dry_run is False
+        assert rules.evitar_duplicados is True
+        assert rules.usar_fuzzy is True
+        assert rules.umbral_fuzzy == 60.0
+
+    def test_validate_invalid_fuzzy_threshold_negative(self) -> None:
+        """Test validation fails for negative fuzzy threshold."""
+        rules = CopyRules(umbral_fuzzy=-10.0)
+        with pytest.raises(ValidationError, match="umbral_fuzzy debe estar entre 0 y 100"):
+            rules.validate()
+
+    def test_validate_invalid_fuzzy_threshold_over_100(self) -> None:
+        """Test validation fails for fuzzy threshold over 100."""
+        rules = CopyRules(umbral_fuzzy=150.0)
+        with pytest.raises(ValidationError, match="umbral_fuzzy debe estar entre 0 y 100"):
+            rules.validate()
+
+    def test_validate_valid_fuzzy_threshold(self) -> None:
+        """Test validation passes for valid fuzzy threshold."""
+        rules = CopyRules(umbral_fuzzy=85.0)
+        rules.validate()  # Should not raise
+
+    def test_new_fields_to_dict_from_dict_roundtrip(self) -> None:
+        """Test JSON roundtrip for new CopyRules fields."""
+        original = CopyRules(
+            filtrar_por_tamano=True,
+            filtrar_por_duracion=True,
+            solo_extensiones_seleccionadas=True,
+            dry_run=True,
+            evitar_duplicados=False,
+            usar_fuzzy=False,
+            umbral_fuzzy=75.0,
+        )
+        data = original.to_dict()
+        restored = CopyRules.from_dict(data)
+
+        assert restored.filtrar_por_tamano == original.filtrar_por_tamano
+        assert restored.filtrar_por_duracion == original.filtrar_por_duracion
+        assert restored.solo_extensiones_seleccionadas == original.solo_extensiones_seleccionadas
+        assert restored.dry_run == original.dry_run
+        assert restored.evitar_duplicados == original.evitar_duplicados
+        assert restored.usar_fuzzy == original.usar_fuzzy
+        assert restored.umbral_fuzzy == original.umbral_fuzzy
+
+
+class TestProfile:
+    """Tests for Profile dataclass."""
+
+    def test_default_values(self) -> None:
+        """Test that default values are set correctly."""
+        profile = Profile(nombre="Test Profile")
+        assert profile.nombre == "Test Profile"
+        assert profile.modo_organizacion == OrganizationMode.SINGLE_FOLDER
+        assert isinstance(profile.reglas, CopyRules)
+
+    def test_validate_empty_name(self) -> None:
+        """Test validation fails for empty name."""
+        profile = Profile(nombre="")
+        with pytest.raises(ValidationError, match="El nombre del perfil no puede estar vacío"):
+            profile.validate()
+
+    def test_validate_whitespace_name(self) -> None:
+        """Test validation fails for whitespace-only name."""
+        profile = Profile(nombre="   ")
+        with pytest.raises(ValidationError, match="El nombre del perfil no puede estar vacío"):
+            profile.validate()
+
+    def test_validate_propagates_rules_error(self) -> None:
+        """Test validation propagates rule validation errors."""
+        profile = Profile(
+            nombre="Test Profile",
+            reglas=CopyRules(tamano_min_mb=-10),
+        )
+        with pytest.raises(ValidationError, match="tamano_min_mb no puede ser negativo"):
+            profile.validate()
+
+    def test_valid_profile(self) -> None:
+        """Test validation passes for a valid profile."""
+        profile = Profile(
+            nombre="USB Música",
+            reglas=CopyRules(
+                extensiones_permitidas=[".mp3", ".flac"],
+                tamano_min_mb=1.0,
+                usar_fuzzy=True,
+                umbral_fuzzy=70.0,
+            ),
+            modo_organizacion=OrganizationMode.SCATTER_BY_ARTIST,
+        )
+        profile.validate()  # Should not raise
+
+    def test_to_dict_from_dict_roundtrip(self) -> None:
+        """Test JSON roundtrip for Profile."""
+        original = Profile(
+            nombre="USB Música",
+            reglas=CopyRules(
+                extensiones_permitidas=[".mp3", ".flac"],
+                tamano_min_mb=1.0,
+                filtrar_por_tamano=True,
+                usar_fuzzy=True,
+                umbral_fuzzy=70.0,
+            ),
+            modo_organizacion=OrganizationMode.SCATTER_BY_ARTIST,
+        )
+        data = original.to_dict()
+        restored = Profile.from_dict(data)
+
+        assert restored.nombre == original.nombre
+        assert restored.modo_organizacion == original.modo_organizacion
+        assert restored.reglas.extensiones_permitidas == original.reglas.extensiones_permitidas
+        assert restored.reglas.tamano_min_mb == original.reglas.tamano_min_mb
+        assert restored.reglas.filtrar_por_tamano == original.reglas.filtrar_por_tamano
+        assert restored.reglas.usar_fuzzy == original.reglas.usar_fuzzy
+        assert restored.reglas.umbral_fuzzy == original.reglas.umbral_fuzzy
+
+    def test_to_json_from_json_roundtrip(self) -> None:
+        """Test full JSON string roundtrip for Profile."""
+        original = Profile(
+            nombre="Video Backup",
+            reglas=CopyRules(
+                extensiones_permitidas=[".mp4", ".mkv"],
+                duracion_min_seg=600.0,
+                filtrar_por_duracion=True,
+                dry_run=True,
+            ),
+            modo_organizacion=OrganizationMode.FOLDER_PER_REQUEST,
+        )
+        json_str = original.to_json()
+        restored = Profile.from_json(json_str)
+
+        assert restored.nombre == original.nombre
+        assert restored.modo_organizacion == original.modo_organizacion
+        assert restored.reglas.extensiones_permitidas == original.reglas.extensiones_permitidas
+        assert restored.reglas.duracion_min_seg == original.reglas.duracion_min_seg
+        assert restored.reglas.filtrar_por_duracion == original.reglas.filtrar_por_duracion
+        assert restored.reglas.dry_run == original.reglas.dry_run
+
+
+class TestProfileManager:
+    """Tests for ProfileManager."""
+
+    def test_save_and_load_profile(self, tmp_path) -> None:
+        """Test saving and loading a profile."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+        profile = Profile(
+            nombre="USB Música",
+            reglas=CopyRules(
+                extensiones_permitidas=[".mp3", ".flac"],
+                tamano_min_mb=1.0,
+                usar_fuzzy=True,
+                umbral_fuzzy=70.0,
+            ),
+            modo_organizacion=OrganizationMode.SCATTER_BY_ARTIST,
+        )
+        manager.save_profile(profile)
+
+        loaded = manager.load_profile("USB Música")
+        assert loaded is not None
+        assert loaded.nombre == "USB Música"
+        assert loaded.reglas.extensiones_permitidas == [".mp3", ".flac"]
+        assert loaded.reglas.tamano_min_mb == 1.0
+        assert loaded.modo_organizacion == OrganizationMode.SCATTER_BY_ARTIST
+
+    def test_load_nonexistent_profile(self, tmp_path) -> None:
+        """Test loading a profile that doesn't exist."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+        loaded = manager.load_profile("Nonexistent")
+        assert loaded is None
+
+    def test_list_profiles(self, tmp_path) -> None:
+        """Test listing all profiles."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+
+        # Save multiple profiles
+        manager.save_profile(Profile(nombre="Profile A"))
+        manager.save_profile(Profile(nombre="Profile B"))
+        manager.save_profile(Profile(nombre="Profile C"))
+
+        profiles = manager.list_profiles()
+        assert len(profiles) == 3
+        assert "Profile A" in profiles
+        assert "Profile B" in profiles
+        assert "Profile C" in profiles
+
+    def test_delete_profile(self, tmp_path) -> None:
+        """Test deleting a profile."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+        profile = Profile(nombre="Test Profile")
+        manager.save_profile(profile)
+
+        assert manager.delete_profile("Test Profile") is True
+        assert manager.load_profile("Test Profile") is None
+
+    def test_delete_nonexistent_profile(self, tmp_path) -> None:
+        """Test deleting a profile that doesn't exist."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+        assert manager.delete_profile("Nonexistent") is False
+
+    def test_save_profile_validates(self, tmp_path) -> None:
+        """Test that saving a profile validates it first."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+        profile = Profile(nombre="", reglas=CopyRules())
+
+        with pytest.raises(ValidationError):
+            manager.save_profile(profile)
+
+    def test_acceptance_criteria_usb_musica_profile(self, tmp_path) -> None:
+        """Test acceptance criteria: save and load 'USB Música' profile for a new job."""
+        manager = ProfileManager(profiles_dir=str(tmp_path))
+
+        # Create and save the "USB Música" profile
+        usb_musica = Profile(
+            nombre="USB Música",
+            reglas=CopyRules(
+                extensiones_permitidas=[".mp3", ".flac", ".wav"],
+                tamano_min_mb=0.5,
+                filtrar_por_tamano=True,
+                evitar_duplicados=True,
+                usar_fuzzy=True,
+                umbral_fuzzy=65.0,
+            ),
+            modo_organizacion=OrganizationMode.SCATTER_BY_ARTIST,
+        )
+        manager.save_profile(usb_musica)
+
+        # List profiles and verify it's there
+        profiles = manager.list_profiles()
+        assert "USB Música" in profiles
+
+        # Load the profile and apply it to a new job
+        loaded_profile = manager.load_profile("USB Música")
+        assert loaded_profile is not None
+
+        # Verify all settings were preserved
+        assert loaded_profile.nombre == "USB Música"
+        assert loaded_profile.reglas.extensiones_permitidas == [".mp3", ".flac", ".wav"]
+        assert loaded_profile.reglas.tamano_min_mb == 0.5
+        assert loaded_profile.reglas.filtrar_por_tamano is True
+        assert loaded_profile.reglas.evitar_duplicados is True
+        assert loaded_profile.reglas.usar_fuzzy is True
+        assert loaded_profile.reglas.umbral_fuzzy == 65.0
+        assert loaded_profile.modo_organizacion == OrganizationMode.SCATTER_BY_ARTIST
