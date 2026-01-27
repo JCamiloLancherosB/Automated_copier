@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 import customtkinter as ctk
 
@@ -750,8 +751,6 @@ class MediaCopierUI(ctk.CTk):
 
         for item_text in job.items:
             # Check if item_text is a file path
-            from pathlib import Path
-
             item_path = Path(item_text)
             if item_path.exists() and item_path.is_file():
                 size = item_path.stat().st_size
@@ -811,10 +810,11 @@ class MediaCopierUI(ctk.CTk):
         if self._runner_manager.start_job(job_id):
             self._job_queue.update_status(job_id, JobStatus.RUNNING)
             self._refresh_jobs()
+            size_mb = plan.total_bytes / (1024 * 1024) if plan.total_bytes > 0 else 0.0
             self._log(
                 LogLevel.OK,
                 f"Ejecutando {job.name} ({len(plan.items)} archivos, "
-                f"{plan.total_bytes / (1024 * 1024):.2f} MB)"
+                f"{size_mb:.2f} MB)"
                 + (" [DRY-RUN]" if dry_run else ""),
             )
         else:

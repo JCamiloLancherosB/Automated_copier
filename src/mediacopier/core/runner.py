@@ -133,6 +133,11 @@ class JobRunner:
             return self._state
 
     @property
+    def current_job_id(self) -> str | None:
+        """Get the ID of the currently running job."""
+        return self._current_job_id
+
+    @property
     def progress(self) -> RunnerProgress | None:
         """Get the current progress information."""
         return self._progress
@@ -653,7 +658,7 @@ class JobRunnerManager:
         result = self._runner.stop()
         if result:
             # Save checkpoint for potential resume
-            job_id = self._runner._current_job_id
+            job_id = self._runner.current_job_id
             if job_id:
                 with self._lock:
                     self._job_checkpoints[job_id] = self._runner.get_checkpoint()
@@ -665,7 +670,7 @@ class JobRunnerManager:
         Args:
             job_id: Job ID to save checkpoint for.
         """
-        if self._runner._current_job_id == job_id:
+        if self._runner.current_job_id == job_id:
             with self._lock:
                 self._job_checkpoints[job_id] = self._runner.get_checkpoint()
 
@@ -691,7 +696,7 @@ class JobRunnerManager:
             True if the job can be edited.
         """
         # Can edit if runner is not running this job
-        if self._runner._current_job_id != job_id:
+        if self._runner.current_job_id != job_id:
             return True
         return self._runner.can_edit
 
@@ -704,6 +709,6 @@ class JobRunnerManager:
         Returns:
             Progress information or None.
         """
-        if self._runner._current_job_id == job_id:
+        if self._runner.current_job_id == job_id:
             return self._runner.progress
         return None

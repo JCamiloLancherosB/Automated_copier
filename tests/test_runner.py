@@ -763,5 +763,7 @@ class TestAcceptanceCriteria:
 
         # Total files should all be copied between both runs
         # Note: Some might be duplicated if checkpoint wasn't exact, but all should exist
-        total_copied = runner1.report.copied + runner2.report.copied
+        runner1_copied = runner1.report.copied if runner1.report else 0
+        runner2_copied = runner2.report.copied if runner2.report else 0
+        total_copied = runner1_copied + runner2_copied
         assert total_copied >= 10  # At least all files should be copied
