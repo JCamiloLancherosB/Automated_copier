@@ -17,6 +17,7 @@ from mediacopier.core.copier import (
 )
 from mediacopier.core.indexer import MediaFile, MediaType
 from mediacopier.core.matcher import MatchCandidate, MatchResult
+from mediacopier.core.metadata_audio import AudioMeta
 from mediacopier.core.models import OrganizationMode, RequestedItem, RequestedItemType
 
 
@@ -897,8 +898,6 @@ class TestOrganizationModes:
         genre: str | None = None,
     ) -> MatchResult:
         """Helper to create a match result with metadata."""
-        from mediacopier.core.metadata_audio import AudioMeta
-
         source_dir = tmp_path / "source"
         source_dir.mkdir(exist_ok=True)
         source_file = source_dir / filename

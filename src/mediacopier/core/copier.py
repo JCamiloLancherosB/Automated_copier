@@ -150,34 +150,43 @@ def compute_file_hash(file_path: str | Path, algorithm: str = "md5") -> str:
     """
     path = Path(file_path)
     h = hashlib.new(algorithm)
+    # Use 64KB buffer for better I/O performance with large media files
     with path.open("rb") as f:
-        while chunk := f.read(8192):
+        while chunk := f.read(65536):
             h.update(chunk)
     return h.hexdigest()
 
 
-def generate_unique_filename(dest_path: Path) -> Path:
+def generate_unique_filename(dest_path: Path, max_attempts: int = 10000) -> Path:
     """Generate a unique filename by adding a numeric suffix.
 
     This function produces deterministic renaming by incrementing a counter.
 
     Args:
         dest_path: Original destination path that has a collision.
+        max_attempts: Maximum number of rename attempts before raising an error.
 
     Returns:
         New unique path with numeric suffix.
+
+    Raises:
+        RuntimeError: If no unique filename can be found within max_attempts.
     """
     stem = dest_path.stem
     suffix = dest_path.suffix
     parent = dest_path.parent
 
     counter = 1
-    while True:
+    while counter <= max_attempts:
         new_name = f"{stem}_{counter}{suffix}"
         new_path = parent / new_name
         if not new_path.exists():
             return new_path
         counter += 1
+
+    raise RuntimeError(
+        f"Could not generate unique filename for {dest_path} after {max_attempts} attempts"
+    )
 
 
 def _compute_destination_path(
