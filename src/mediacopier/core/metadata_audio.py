@@ -220,7 +220,11 @@ def _extract_flac_metadata(file_path: Path) -> AudioMeta:
         if audio.info:
             meta.duration_sec = audio.info.length
             # FLAC uses bits per sample rather than bitrate
-            if hasattr(audio.info, "bits_per_sample") and hasattr(audio.info, "sample_rate"):
+            if (
+                hasattr(audio.info, "bits_per_sample")
+                and hasattr(audio.info, "sample_rate")
+                and hasattr(audio.info, "channels")
+            ):
                 # Approximate bitrate for FLAC
                 meta.bitrate_kbps = int(
                     (audio.info.bits_per_sample * audio.info.sample_rate * audio.info.channels)
