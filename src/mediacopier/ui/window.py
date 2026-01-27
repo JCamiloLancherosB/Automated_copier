@@ -15,6 +15,17 @@ from mediacopier.core.runner import (
     RunnerEvent,
     RunnerEventType,
 )
+from mediacopier.core.usb_detector import (
+    RemovableDrive,
+    USBPermissionError,
+    USBWriteError,
+    detect_removable_drives,
+    get_drive_display_name,
+    get_usb_movies_folder_structure,
+    get_usb_music_folder_structure,
+    pre_create_folders,
+    validate_usb_destination,
+)
 from mediacopier.ui.job_queue import JobQueue, JobStatus
 
 
@@ -52,11 +63,13 @@ class MediaCopierUI(ctk.CTk):
         self._profile_manager = ProfileManager()
         self._runner_manager = JobRunnerManager()
         self._selected_job_id: str | None = None
+        self._detected_usb_drives: list[RemovableDrive] = []
         self._ui_queue: list[Callable[[], None]] = []
 
         self._build_layout()
         self._start_ui_queue()
         self._refresh_profiles()
+        self._refresh_usb_drives()
         self._log(LogLevel.INFO, "UI lista para crear jobs.")
 
     def _build_layout(self) -> None:
@@ -112,7 +125,41 @@ class MediaCopierUI(ctk.CTk):
             self._left_panel, placeholder_text="Ruta de destino"
         )
         self._destination_entry.grid(
-            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 12)
+            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 8)
+        )
+        row += 1
+
+        # USB Destination Dropdown
+        ctk.CTkLabel(self._left_panel, text="Destino (USB detectadas)").grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=16
+        )
+        row += 1
+
+        usb_frame = ctk.CTkFrame(self._left_panel)
+        usb_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 8))
+        usb_frame.grid_columnconfigure(0, weight=1)
+        row += 1
+
+        self._usb_combo = ctk.CTkOptionMenu(
+            usb_frame,
+            values=["(Ninguna USB detectada)"],
+            command=self._on_usb_selected,
+        )
+        self._usb_combo.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=4)
+
+        ctk.CTkButton(
+            usb_frame, text="Refrescar USB", width=100, command=self._on_refresh_usb
+        ).grid(row=0, column=1, padx=2, pady=4)
+
+        # Pre-create folders option
+        self._pre_create_folders_var = ctk.BooleanVar(value=False)
+        self._pre_create_folders_checkbox = ctk.CTkCheckBox(
+            self._left_panel,
+            text="Pre-crear carpetas antes de copiar",
+            variable=self._pre_create_folders_var,
+        )
+        self._pre_create_folders_checkbox.grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 12)
         )
         row += 1
 
@@ -665,6 +712,107 @@ class MediaCopierUI(ctk.CTk):
         else:
             self._log(LogLevel.ERROR, f"No se pudo eliminar el perfil: {profile_name}")
 
+    # USB drive management
+    def _refresh_usb_drives(self) -> None:
+        """Refresh the list of detected USB drives."""
+        self._detected_usb_drives = detect_removable_drives()
+
+        if self._detected_usb_drives:
+            values = [get_drive_display_name(drive) for drive in self._detected_usb_drives]
+            self._usb_combo.configure(values=values)
+            # Select first available drive
+            self._usb_combo.set(values[0])
+            self._log(
+                LogLevel.INFO,
+                f"Detectadas {len(self._detected_usb_drives)} unidades USB",
+            )
+        else:
+            self._usb_combo.configure(values=["(Ninguna USB detectada)"])
+            self._usb_combo.set("(Ninguna USB detectada)")
+
+    def _on_refresh_usb(self) -> None:
+        """Handle USB refresh button click."""
+        self._refresh_usb_drives()
+        if not self._detected_usb_drives:
+            self._log(LogLevel.WARN, "No se detectaron unidades USB conectadas.")
+
+    def _on_usb_selected(self, selection: str) -> None:
+        """Handle USB drive selection from dropdown."""
+        if selection == "(Ninguna USB detectada)":
+            return
+
+        # Find the selected drive
+        for drive in self._detected_usb_drives:
+            if get_drive_display_name(drive) == selection:
+                # Update destination entry with drive path
+                self._destination_entry.delete(0, "end")
+                self._destination_entry.insert(0, drive.path)
+
+                if not drive.is_writable:
+                    self._show_error(f"La unidad {drive.label} es de solo lectura")
+                else:
+                    self._clear_error()
+                    self._log(LogLevel.OK, f"USB seleccionada: {drive.label}")
+                break
+
+    def _get_selected_usb_drive(self) -> RemovableDrive | None:
+        """Get the currently selected USB drive."""
+        selection = self._usb_combo.get()
+        if selection == "(Ninguna USB detectada)":
+            return None
+
+        for drive in self._detected_usb_drives:
+            if get_drive_display_name(drive) == selection:
+                return drive
+        return None
+
+    def _pre_create_usb_folders(self, dest_path: str) -> bool:
+        """Pre-create folder structure based on organization mode.
+
+        Args:
+            dest_path: Destination path.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if not self._pre_create_folders_var.get():
+            return True
+
+        is_valid, error = validate_usb_destination(dest_path)
+        if not is_valid:
+            self._show_error(error)
+            return False
+
+        mode = self._get_current_organization_mode()
+        folders: list[str] = []
+
+        if mode == OrganizationMode.SCATTER_BY_GENRE:
+            # USB Music template: Music/Genre/Artist
+            folders = get_usb_music_folder_structure()
+        elif mode == OrganizationMode.FOLDER_PER_REQUEST:
+            # USB Movies template: Movies/
+            folders = get_usb_movies_folder_structure()
+        elif mode == OrganizationMode.SCATTER_BY_ARTIST:
+            # Simple Music folder
+            folders = ["Music"]
+        else:
+            # Other modes: no pre-creation needed
+            return True
+
+        try:
+            success, error = pre_create_folders(dest_path, folders)
+            if not success:
+                self._show_error(error)
+                return False
+            self._log(LogLevel.OK, f"Carpetas pre-creadas en: {dest_path}")
+            return True
+        except USBPermissionError as e:
+            self._show_error(f"Error de permisos: {e}")
+            return False
+        except USBWriteError as e:
+            self._show_error(f"Error de escritura: {e}")
+            return False
+
     def _read_items(self) -> list[str]:
         content = self._names_text.get("1.0", "end").strip()
         if not content:
@@ -789,6 +937,11 @@ class MediaCopierUI(ctk.CTk):
         # Check if can run
         if not self._runner_manager.can_edit_job(job_id):
             self._log(LogLevel.WARN, "No se puede ejecutar este job ahora.")
+            return
+
+        # Pre-create folders if option is enabled
+        dest = self._destination_entry.get().strip()
+        if dest and not self._pre_create_usb_folders(dest):
             return
 
         # Create copy plan
