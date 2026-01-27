@@ -63,6 +63,7 @@ class TestCopyRules:
         assert rules.duracion_min_seg == 0.0
         assert rules.incluir_subcarpetas is True
         assert rules.excluir_palabras == []
+        assert rules.organizar_por_genero is False
 
     def test_validate_negative_size(self) -> None:
         """Test validation fails for negative size."""

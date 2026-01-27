@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from mediacopier.core.metadata_audio import AudioMeta
 
 
 class MediaType(Enum):
@@ -123,44 +126,64 @@ class MediaFile:
     extension: str
     tamano: int
     tipo: MediaType
+    audio_meta: "AudioMeta | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
-        return {
+        result = {
             "path": self.path,
             "nombre_base": self.nombre_base,
             "extension": self.extension,
             "tamano": self.tamano,
             "tipo": self.tipo.value,
         }
+        if self.audio_meta is not None:
+            result["audio_meta"] = self.audio_meta.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MediaFile:
         """Deserialize from dictionary."""
+        audio_meta = None
+        if "audio_meta" in data and data["audio_meta"] is not None:
+            from mediacopier.core.metadata_audio import AudioMeta
+
+            audio_meta = AudioMeta.from_dict(data["audio_meta"])
         return cls(
             path=data["path"],
             nombre_base=data["nombre_base"],
             extension=data["extension"],
             tamano=data["tamano"],
             tipo=MediaType(data["tipo"]),
+            audio_meta=audio_meta,
         )
 
     @classmethod
-    def from_path(cls, file_path: Path) -> MediaFile:
+    def from_path(cls, file_path: Path, extract_metadata: bool = False) -> MediaFile:
         """Create a MediaFile from a file path.
 
         Args:
             file_path: Path to the file.
+            extract_metadata: Whether to extract audio metadata for audio files.
 
         Returns:
             MediaFile instance.
         """
+        media_type = detect_media_type(file_path.suffix)
+        audio_meta = None
+
+        if extract_metadata and media_type == MediaType.AUDIO:
+            from mediacopier.core.metadata_audio import extract_audio_metadata
+
+            audio_meta = extract_audio_metadata(file_path)
+
         return cls(
             path=str(file_path),
             nombre_base=file_path.stem,
             extension=file_path.suffix,
             tamano=file_path.stat().st_size,
-            tipo=detect_media_type(file_path.suffix),
+            tipo=media_type,
+            audio_meta=audio_meta,
         )
 
 
@@ -295,6 +318,7 @@ def scan_sources(
     allowed_extensions: list[str] | None = None,
     cache_path: str | Path | None = None,
     progress_callback: ProgressCallback | None = None,
+    extract_audio_metadata: bool = False,
 ) -> MediaCatalog:
     """Scan source folders and build a media catalog.
 
@@ -312,6 +336,7 @@ def scan_sources(
             If None, all non-ignored extensions are included.
         cache_path: Optional path to save/load the catalog cache.
         progress_callback: Optional callback(current, total, current_file) for progress.
+        extract_audio_metadata: Whether to extract audio metadata for audio files.
 
     Returns:
         MediaCatalog with all found media files.
@@ -365,7 +390,7 @@ def scan_sources(
             continue
 
         try:
-            media_file = MediaFile.from_path(file_path)
+            media_file = MediaFile.from_path(file_path, extract_metadata=extract_audio_metadata)
             media_files.append(media_file)
         except OSError:
             # Skip files that can't be read

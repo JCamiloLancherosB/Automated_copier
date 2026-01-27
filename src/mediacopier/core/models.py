@@ -91,6 +91,7 @@ class CopyRules:
     duracion_min_seg: float = 0.0
     incluir_subcarpetas: bool = True
     excluir_palabras: list[str] = field(default_factory=list)
+    organizar_por_genero: bool = False
 
     def validate(self) -> None:
         """Validate the rules configuration.
@@ -111,6 +112,7 @@ class CopyRules:
             "duracion_min_seg": self.duracion_min_seg,
             "incluir_subcarpetas": self.incluir_subcarpetas,
             "excluir_palabras": self.excluir_palabras,
+            "organizar_por_genero": self.organizar_por_genero,
         }
 
     @classmethod
@@ -122,6 +124,7 @@ class CopyRules:
             duracion_min_seg=data.get("duracion_min_seg", 0.0),
             incluir_subcarpetas=data.get("incluir_subcarpetas", True),
             excluir_palabras=data.get("excluir_palabras", []),
+            organizar_por_genero=data.get("organizar_por_genero", False),
         )
 
 
