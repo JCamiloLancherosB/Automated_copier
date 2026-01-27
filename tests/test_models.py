@@ -241,9 +241,7 @@ class TestCopyJob:
             origenes=["/src"],
             destino="/dst",
             modo_organizacion=OrganizationMode.FOLDER_PER_REQUEST,
-            lista_items=[
-                RequestedItem(tipo=RequestedItemType.MOVIE, texto_original="Inception")
-            ],
+            lista_items=[RequestedItem(tipo=RequestedItemType.MOVIE, texto_original="Inception")],
             reglas=CopyRules(duracion_min_seg=300.0),
             estado=CopyJobStatus.COMPLETED,
             stats=CopyStats(archivos_copiados=10, bytes_copiados=1024000),
@@ -273,9 +271,7 @@ class TestQueueExportImport:
                 origenes=["/music"],
                 destino="/backup1",
                 modo_organizacion=OrganizationMode.SINGLE_FOLDER,
-                lista_items=[
-                    RequestedItem(tipo=RequestedItemType.SONG, texto_original="Song A")
-                ],
+                lista_items=[RequestedItem(tipo=RequestedItemType.SONG, texto_original="Song A")],
                 estado=CopyJobStatus.PENDING,
             ),
             CopyJob(
