@@ -300,6 +300,92 @@ class MediaCopierUI(ctk.CTk):
         )
         row += 1
 
+        # Section: Advanced Filtering Rules
+        ctk.CTkLabel(
+            self._left_panel, text="Reglas avanzadas", font=("Arial", 16, "bold")
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(12, 8))
+        row += 1
+
+        # Solo mejor match checkbox
+        self._rules_vars["solo_mejor_match"] = ctk.BooleanVar(value=False)
+        solo_mejor_checkbox = ctk.CTkCheckBox(
+            self._left_panel,
+            text="Solo copiar el mejor match por solicitud",
+            variable=self._rules_vars["solo_mejor_match"],
+        )
+        solo_mejor_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 6))
+        row += 1
+
+        # Prefer high resolution checkbox (for movies)
+        self._rules_vars["preferir_resolucion_alta"] = ctk.BooleanVar(value=True)
+        res_checkbox = ctk.CTkCheckBox(
+            self._left_panel,
+            text="Preferir mayor resolución (películas)",
+            variable=self._rules_vars["preferir_resolucion_alta"],
+        )
+        res_checkbox.grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 6))
+        row += 1
+
+        # Exclusion words (multiline textbox)
+        ctk.CTkLabel(
+            self._left_panel,
+            text="Palabras a excluir (una por línea):",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 4))
+        row += 1
+
+        self._exclusion_words_text = ctk.CTkTextbox(
+            self._left_panel, height=80, wrap="word"
+        )
+        self._exclusion_words_text.grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 8)
+        )
+        # Default exclusion words
+        default_exclusions = "sample\ntrailer\ncamrip\ncam\nts\ntelesync\nlow quality"
+        self._exclusion_words_text.insert("1.0", default_exclusions)
+        row += 1
+
+        # Audio extensions whitelist
+        ctk.CTkLabel(
+            self._left_panel,
+            text="Ext. audio permitidas (coma sep., vacío=todas):",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 4))
+        row += 1
+        self._audio_ext_whitelist_entry = ctk.CTkEntry(
+            self._left_panel, placeholder_text=".mp3, .flac, .wav"
+        )
+        self._audio_ext_whitelist_entry.grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 6)
+        )
+        row += 1
+
+        # Video extensions whitelist
+        ctk.CTkLabel(
+            self._left_panel,
+            text="Ext. video permitidas (coma sep., vacío=todas):",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 4))
+        row += 1
+        self._video_ext_whitelist_entry = ctk.CTkEntry(
+            self._left_panel, placeholder_text=".mkv, .mp4"
+        )
+        self._video_ext_whitelist_entry.grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 6)
+        )
+        row += 1
+
+        # Preferred codecs (for movies)
+        ctk.CTkLabel(
+            self._left_panel,
+            text="Codecs preferidos (coma sep., ej: h264, hevc):",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(8, 4))
+        row += 1
+        self._codecs_entry = ctk.CTkEntry(
+            self._left_panel, placeholder_text="h264, hevc, x265"
+        )
+        self._codecs_entry.grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 12)
+        )
+        row += 1
+
         # Error message label
         self._error_label = ctk.CTkLabel(
             self._left_panel, text="", text_color="#ea4335", wraplength=400
@@ -596,6 +682,44 @@ class MediaCopierUI(ctk.CTk):
             self._show_error("Umbral fuzzy debe estar entre 0 y 100")
             return None
 
+        # Parse exclusion words from multiline textbox
+        exclusion_text = self._exclusion_words_text.get("1.0", "end-1c").strip()
+        excluir_palabras = []
+        if exclusion_text:
+            for line in exclusion_text.split("\n"):
+                word = line.strip()
+                if word:
+                    excluir_palabras.append(word)
+
+        # Parse audio extensions whitelist
+        audio_ext_text = self._audio_ext_whitelist_entry.get().strip()
+        audio_ext_whitelist = []
+        if audio_ext_text:
+            for raw_ext in audio_ext_text.split(","):
+                raw_ext = raw_ext.strip()
+                if raw_ext:
+                    ext = raw_ext if raw_ext.startswith(".") else f".{raw_ext}"
+                    audio_ext_whitelist.append(ext.lower())
+
+        # Parse video extensions whitelist
+        video_ext_text = self._video_ext_whitelist_entry.get().strip()
+        video_ext_whitelist = []
+        if video_ext_text:
+            for raw_ext in video_ext_text.split(","):
+                raw_ext = raw_ext.strip()
+                if raw_ext:
+                    ext = raw_ext if raw_ext.startswith(".") else f".{raw_ext}"
+                    video_ext_whitelist.append(ext.lower())
+
+        # Parse preferred codecs
+        codecs_text = self._codecs_entry.get().strip()
+        codecs_preferidos = []
+        if codecs_text:
+            for codec in codecs_text.split(","):
+                codec = codec.strip()
+                if codec:
+                    codecs_preferidos.append(codec.lower())
+
         return CopyRules(
             extensiones_permitidas=extensions,
             tamano_min_mb=size,
@@ -607,6 +731,12 @@ class MediaCopierUI(ctk.CTk):
             evitar_duplicados=self._rules_vars["evitar_duplicados"].get(),
             usar_fuzzy=self._rules_vars["usar_fuzzy"].get(),
             umbral_fuzzy=fuzzy_threshold,
+            excluir_palabras=excluir_palabras,
+            extensiones_audio_permitidas=audio_ext_whitelist,
+            extensiones_video_permitidas=video_ext_whitelist,
+            solo_mejor_match=self._rules_vars["solo_mejor_match"].get(),
+            preferir_resolucion_alta=self._rules_vars["preferir_resolucion_alta"].get(),
+            codecs_preferidos=codecs_preferidos,
         )
 
     def _get_current_organization_mode(self) -> OrganizationMode:
@@ -637,6 +767,34 @@ class MediaCopierUI(ctk.CTk):
         self._extensions_entry.delete(0, "end")
         if rules.extensiones_permitidas:
             self._extensions_entry.insert(0, ", ".join(rules.extensiones_permitidas))
+
+        # Apply advanced rules to UI
+        self._rules_vars["solo_mejor_match"].set(rules.solo_mejor_match)
+        self._rules_vars["preferir_resolucion_alta"].set(rules.preferir_resolucion_alta)
+
+        # Exclusion words
+        self._exclusion_words_text.delete("1.0", "end")
+        if rules.excluir_palabras:
+            self._exclusion_words_text.insert("1.0", "\n".join(rules.excluir_palabras))
+
+        # Audio extensions whitelist
+        self._audio_ext_whitelist_entry.delete(0, "end")
+        if rules.extensiones_audio_permitidas:
+            self._audio_ext_whitelist_entry.insert(
+                0, ", ".join(rules.extensiones_audio_permitidas)
+            )
+
+        # Video extensions whitelist
+        self._video_ext_whitelist_entry.delete(0, "end")
+        if rules.extensiones_video_permitidas:
+            self._video_ext_whitelist_entry.insert(
+                0, ", ".join(rules.extensiones_video_permitidas)
+            )
+
+        # Preferred codecs
+        self._codecs_entry.delete(0, "end")
+        if rules.codecs_preferidos:
+            self._codecs_entry.insert(0, ", ".join(rules.codecs_preferidos))
 
     def _apply_organization_mode_to_ui(self, mode: OrganizationMode) -> None:
         """Apply organization mode to UI."""

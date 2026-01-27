@@ -101,6 +101,17 @@ class CopyRules:
     evitar_duplicados: bool = True
     usar_fuzzy: bool = True
     umbral_fuzzy: float = 60.0
+    # Advanced filtering rules
+    extensiones_audio_permitidas: list[str] = field(default_factory=list)
+    extensiones_audio_bloqueadas: list[str] = field(default_factory=list)
+    extensiones_video_permitidas: list[str] = field(default_factory=list)
+    extensiones_video_bloqueadas: list[str] = field(default_factory=list)
+    solo_mejor_match: bool = False  # True = only best match, False = all similar matches
+    # Movie quality preferences (higher priority = preferred)
+    preferir_resolucion_alta: bool = True  # Prefer 1080p > 720p > 480p
+    codecs_preferidos: list[str] = field(default_factory=list)  # e.g., ["h264", "hevc", "x265"]
+    tamano_max_mb: float = 0.0  # Maximum file size in MB (0 = no limit)
+    duracion_max_seg: float = 0.0  # Maximum duration in seconds (0 = no limit)
 
     def validate(self) -> None:
         """Validate the rules configuration.
@@ -110,8 +121,12 @@ class CopyRules:
         """
         if self.tamano_min_mb < 0:
             raise ValidationError("tamano_min_mb no puede ser negativo")
+        if self.tamano_max_mb < 0:
+            raise ValidationError("tamano_max_mb no puede ser negativo")
         if self.duracion_min_seg < 0:
             raise ValidationError("duracion_min_seg no puede ser negativa")
+        if self.duracion_max_seg < 0:
+            raise ValidationError("duracion_max_seg no puede ser negativa")
         if self.umbral_fuzzy < 0 or self.umbral_fuzzy > 100:
             raise ValidationError("umbral_fuzzy debe estar entre 0 y 100")
 
@@ -131,6 +146,15 @@ class CopyRules:
             "evitar_duplicados": self.evitar_duplicados,
             "usar_fuzzy": self.usar_fuzzy,
             "umbral_fuzzy": self.umbral_fuzzy,
+            "extensiones_audio_permitidas": self.extensiones_audio_permitidas,
+            "extensiones_audio_bloqueadas": self.extensiones_audio_bloqueadas,
+            "extensiones_video_permitidas": self.extensiones_video_permitidas,
+            "extensiones_video_bloqueadas": self.extensiones_video_bloqueadas,
+            "solo_mejor_match": self.solo_mejor_match,
+            "preferir_resolucion_alta": self.preferir_resolucion_alta,
+            "codecs_preferidos": self.codecs_preferidos,
+            "tamano_max_mb": self.tamano_max_mb,
+            "duracion_max_seg": self.duracion_max_seg,
         }
 
     @classmethod
@@ -150,6 +174,15 @@ class CopyRules:
             evitar_duplicados=data.get("evitar_duplicados", True),
             usar_fuzzy=data.get("usar_fuzzy", True),
             umbral_fuzzy=data.get("umbral_fuzzy", 60.0),
+            extensiones_audio_permitidas=data.get("extensiones_audio_permitidas", []),
+            extensiones_audio_bloqueadas=data.get("extensiones_audio_bloqueadas", []),
+            extensiones_video_permitidas=data.get("extensiones_video_permitidas", []),
+            extensiones_video_bloqueadas=data.get("extensiones_video_bloqueadas", []),
+            solo_mejor_match=data.get("solo_mejor_match", False),
+            preferir_resolucion_alta=data.get("preferir_resolucion_alta", True),
+            codecs_preferidos=data.get("codecs_preferidos", []),
+            tamano_max_mb=data.get("tamano_max_mb", 0.0),
+            duracion_max_seg=data.get("duracion_max_seg", 0.0),
         )
 
 
