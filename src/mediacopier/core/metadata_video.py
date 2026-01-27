@@ -175,7 +175,7 @@ def _run_ffprobe(file_path: Path) -> dict[str, Any] | None:
         return None
 
 
-def extract_video_metadata(file_path: str | Path) -> VideoMeta | None:
+def extract_video_metadata(file_path: str | Path) -> VideoMeta:
     """Extract video metadata from a file.
 
     Uses ffprobe to read video metadata if available.
@@ -186,8 +186,8 @@ def extract_video_metadata(file_path: str | Path) -> VideoMeta | None:
         file_path: Path to the video file.
 
     Returns:
-        VideoMeta with extracted metadata, or VideoMeta with minimal data
-        if ffprobe is not available.
+        VideoMeta with extracted metadata, or empty VideoMeta with minimal data
+        if ffprobe is not available or fails.
     """
     path = Path(file_path)
 
@@ -218,8 +218,12 @@ def meets_minimum_duration(video_meta: VideoMeta | None, min_duration_sec: float
     if min_duration_sec <= 0:
         return True
 
-    if video_meta is None or not video_meta.has_duration:
-        # If we can't determine duration, assume it meets the requirement
+    if video_meta is None:
+        # If we have no metadata, assume it meets the requirement
+        return True
+
+    if video_meta.duration_sec is None:
+        # If duration is unknown, assume it meets the requirement
         return True
 
     return video_meta.duration_sec >= min_duration_sec
