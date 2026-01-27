@@ -391,15 +391,14 @@ class MediaCopierUI(ctk.CTk):
         if duration is None:
             return None
 
-        # Parse extensions
+        # Parse extensions - normalize to lowercase with leading dot
         extensions_text = self._extensions_entry.get().strip()
         extensions = []
         if extensions_text:
-            for ext in extensions_text.split(","):
-                ext = ext.strip()
-                if ext:
-                    if not ext.startswith("."):
-                        ext = f".{ext}"
+            for raw_ext in extensions_text.split(","):
+                raw_ext = raw_ext.strip()
+                if raw_ext:
+                    ext = raw_ext if raw_ext.startswith(".") else f".{raw_ext}"
                     extensions.append(ext.lower())
 
         # Validate fuzzy threshold
@@ -439,7 +438,9 @@ class MediaCopierUI(ctk.CTk):
         self._size_entry.insert(0, str(rules.tamano_min_mb))
 
         self._duration_entry.delete(0, "end")
-        self._duration_entry.insert(0, str(rules.duracion_min_seg / 60))  # Convert seconds to min
+        # Convert seconds to minutes with rounding for clean display
+        duration_minutes = round(rules.duracion_min_seg / 60, 2)
+        self._duration_entry.insert(0, str(duration_minutes))
 
         self._fuzzy_threshold_var.set(rules.umbral_fuzzy)
         self._fuzzy_label.configure(text=f"{int(rules.umbral_fuzzy)}%")

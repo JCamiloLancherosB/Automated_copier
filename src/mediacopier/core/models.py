@@ -350,9 +350,9 @@ class ProfileManager:
 
     def _get_profile_path(self, name: str) -> Path:
         """Get the file path for a profile name."""
-        # Sanitize name to use as filename
-        safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in name)
-        safe_name = safe_name.strip()
+        # Sanitize name to use as filename - replace spaces with underscores for cross-platform
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        safe_name = safe_name.strip("_")
         if not safe_name:
             safe_name = "profile"
         return self._profiles_dir / f"{safe_name}.json"
