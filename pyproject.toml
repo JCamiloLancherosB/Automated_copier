@@ -12,6 +12,7 @@ dependencies = ["customtkinter>=5.2.2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4.0", "ruff>=0.6.0"]
+matching = ["rapidfuzz>=3.6.0"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
