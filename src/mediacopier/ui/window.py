@@ -69,15 +69,11 @@ class MediaCopierUI(ctk.CTk):
             row=0, column=0, sticky="w", padx=16, pady=(16, 8)
         )
 
-        ctk.CTkLabel(self._left_panel, text="Origen").grid(
-            row=1, column=0, sticky="w", padx=16
-        )
+        ctk.CTkLabel(self._left_panel, text="Origen").grid(row=1, column=0, sticky="w", padx=16)
         self._source_entry = ctk.CTkEntry(self._left_panel, placeholder_text="Ruta de origen")
         self._source_entry.grid(row=2, column=0, sticky="ew", padx=16, pady=(4, 12))
 
-        ctk.CTkLabel(self._left_panel, text="Destino").grid(
-            row=3, column=0, sticky="w", padx=16
-        )
+        ctk.CTkLabel(self._left_panel, text="Destino").grid(row=3, column=0, sticky="w", padx=16)
         self._destination_entry = ctk.CTkEntry(self._left_panel, placeholder_text="Ruta de destino")
         self._destination_entry.grid(row=4, column=0, sticky="ew", padx=16, pady=(4, 12))
 
@@ -89,9 +85,7 @@ class MediaCopierUI(ctk.CTk):
         )
         self._mode_option.grid(row=6, column=0, sticky="ew", padx=16, pady=(4, 12))
 
-        ctk.CTkLabel(self._left_panel, text="Filtros").grid(
-            row=7, column=0, sticky="w", padx=16
-        )
+        ctk.CTkLabel(self._left_panel, text="Filtros").grid(row=7, column=0, sticky="w", padx=16)
         self._filters = {
             "Solo imágenes": ctk.BooleanVar(value=True),
             "Solo videos": ctk.BooleanVar(value=False),
@@ -143,9 +137,9 @@ class MediaCopierUI(ctk.CTk):
         self._names_text.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
 
     def _build_queue_panel(self) -> None:
-        ctk.CTkLabel(
-            self._queue_panel, text="Cola de trabajos", font=("Arial", 18, "bold")
-        ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
+        ctk.CTkLabel(self._queue_panel, text="Cola de trabajos", font=("Arial", 18, "bold")).grid(
+            row=0, column=0, sticky="w", padx=16, pady=(16, 8)
+        )
 
         self._queue_table = ctk.CTkScrollableFrame(self._queue_panel)
         self._queue_table.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
