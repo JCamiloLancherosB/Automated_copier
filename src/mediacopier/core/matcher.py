@@ -21,8 +21,9 @@ except ImportError:
 
 
 # Patterns to remove from song names for normalization
+# Uses word boundary and captures everything until end of string or parenthesis/bracket
 FEAT_PATTERNS = re.compile(
-    r"\b(?:feat\.?|ft\.?|featuring)\s+[^()[\]]*",
+    r"\b(?:feat\.?|ft\.?|featuring)\b[\s.]*[^()[\]]*?(?=\s*[\(\[]|$)",
     re.IGNORECASE,
 )
 
@@ -134,6 +135,9 @@ def tokenize(text: str) -> set[str]:
 def get_penalty_words_in_text(text: str) -> set[str]:
     """Find penalty words present in the text.
 
+    Uses word boundary matching to avoid partial word matches
+    (e.g., 'live' won't match in 'delivery').
+
     Args:
         text: Text to analyze.
 
@@ -141,11 +145,20 @@ def get_penalty_words_in_text(text: str) -> set[str]:
         Set of penalty words found in text.
     """
     text_lower = text.lower()
-    return {word for word in PENALTY_WORDS if word in text_lower}
+    result = set()
+    for word in PENALTY_WORDS:
+        # Use word boundary regex to avoid partial matches
+        pattern = rf"\b{re.escape(word)}\b"
+        if re.search(pattern, text_lower):
+            result.add(word)
+    return result
 
 
 def get_bonus_words_in_text(text: str) -> set[str]:
     """Find bonus words present in the text.
+
+    Uses word boundary matching to avoid partial word matches
+    (e.g., 'official' won't match in 'unofficial').
 
     Args:
         text: Text to analyze.
@@ -154,7 +167,13 @@ def get_bonus_words_in_text(text: str) -> set[str]:
         Set of bonus words found in text.
     """
     text_lower = text.lower()
-    return {word for word in BONUS_WORDS if word in text_lower}
+    result = set()
+    for word in BONUS_WORDS:
+        # Use word boundary regex to avoid partial matches
+        pattern = rf"\b{re.escape(word)}\b"
+        if re.search(pattern, text_lower):
+            result.add(word)
+    return result
 
 
 def fuzzy_ratio(str1: str, str2: str) -> float:

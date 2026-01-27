@@ -61,6 +61,14 @@ class TestNormalizeText:
         assert normalize_text("Song [Remastered 2020]") == "song"
         assert normalize_text("Track (Live) [HD]") == "track"
 
+    def test_feat_with_parenthetical(self) -> None:
+        """Test that feat is removed but parentheses are preserved separately."""
+        # The feat pattern should not consume parenthetical content
+        result = normalize_text("Song feat. Artist (Official)")
+        assert "song" in result
+        # Parenthetical content is also removed by normalize_text
+        assert "official" not in result
+
     def test_unicode_normalization(self) -> None:
         """Test that unicode accents are normalized."""
         assert normalize_text("Café") == "cafe"
@@ -126,6 +134,15 @@ class TestPenaltyAndBonusWords:
         """Test when no penalty words are present."""
         assert get_penalty_words_in_text("Song Name (Official)") == set()
 
+    def test_penalty_words_no_partial_match(self) -> None:
+        """Test that partial words are not matched for penalties."""
+        # 'delivery' should not match 'live'
+        assert "live" not in get_penalty_words_in_text("Special Delivery")
+        # 'coverage' should not match 'cover'
+        assert "cover" not in get_penalty_words_in_text("Coverage Report")
+        # 'acoustic' should match though (full word)
+        assert "acoustic" in get_penalty_words_in_text("Song (Acoustic Version)")
+
     def test_detect_bonus_words(self) -> None:
         """Test detection of bonus words."""
         assert "official" in get_bonus_words_in_text("Song Name (Official)")
@@ -135,6 +152,15 @@ class TestPenaltyAndBonusWords:
     def test_no_bonus_words(self) -> None:
         """Test when no bonus words are present."""
         assert get_bonus_words_in_text("Song Name") == set()
+
+    def test_bonus_words_no_partial_match(self) -> None:
+        """Test that partial words are not matched for bonuses."""
+        # 'unofficial' should not match 'official'
+        assert "official" not in get_bonus_words_in_text("Unofficial Release")
+        # 'hd' at end of word like 'method' should not match
+        assert "hd" not in get_bonus_words_in_text("Method Man")
+        # But 'HD' as standalone should match
+        assert "hd" in get_bonus_words_in_text("Song (HD Quality)")
 
 
 class TestFuzzyRatios:
