@@ -7,6 +7,8 @@ thread with support for:
 - Safe stop functionality
 - Progress tracking with ETA calculation
 - Thread-safe communication via event queue
+- Timestamped logging with levels
+- Job report generation with summary by category
 """
 
 from __future__ import annotations
@@ -15,12 +17,18 @@ import shutil
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
 
 from mediacopier.core.copier import CopyItemAction, CopyPlan, CopyReport
+from mediacopier.core.job_report import (
+    FileOperationStatus,
+    JobReport,
+)
+from mediacopier.core.logger import MediaCopierLogger
 
 
 class RunnerState(Enum):
@@ -105,13 +113,22 @@ class JobRunner:
     - Safe stopping
     - Progress tracking with ETA
     - Thread-safe state management
+    - Timestamped logging with configurable levels
+    - Job report generation with summary by category
     """
 
-    def __init__(self, event_queue: Queue[RunnerEvent] | None = None) -> None:
+    def __init__(
+        self,
+        event_queue: Queue[RunnerEvent] | None = None,
+        logger: MediaCopierLogger | None = None,
+        enable_logging: bool = True,
+    ) -> None:
         """Initialize the job runner.
 
         Args:
             event_queue: Queue for sending events to the UI. If None, events are discarded.
+            logger: Optional logger instance for timestamped logging.
+            enable_logging: Whether to enable logging (default True).
         """
         self._event_queue = event_queue or Queue()
         self._state = RunnerState.PENDING
@@ -121,10 +138,20 @@ class JobRunner:
         self._stop_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self._current_job_id: str | None = None
+        self._current_job_name: str = ""
         self._progress: RunnerProgress | None = None
         self._report: CopyReport | None = None
+        self._job_report: JobReport | None = None
         # Checkpoint: index of next file to process
         self._checkpoint_index: int = 0
+        # Logging
+        self._logger = logger
+        self._enable_logging = enable_logging
+        # Job metadata for report
+        self._job_sources: list[str] = []
+        self._job_destination: str = ""
+        self._job_organization_mode: str = ""
+        self._start_time_iso: str = ""
 
     @property
     def state(self) -> RunnerState:
@@ -148,6 +175,11 @@ class JobRunner:
         return self._report
 
     @property
+    def job_report(self) -> JobReport | None:
+        """Get the complete job report with summary by category."""
+        return self._job_report
+
+    @property
     def is_running(self) -> bool:
         """Check if the runner is currently executing a job."""
         return self.state in (RunnerState.RUNNING, RunnerState.PAUSED)
@@ -160,6 +192,53 @@ class JobRunner:
             RunnerState.DONE,
             RunnerState.FAILED,
         )
+
+    def set_logger(self, logger: MediaCopierLogger) -> None:
+        """Set the logger instance.
+
+        Args:
+            logger: MediaCopierLogger instance for logging.
+        """
+        self._logger = logger
+
+    def set_job_metadata(
+        self,
+        job_name: str = "",
+        sources: list[str] | None = None,
+        destination: str = "",
+        organization_mode: str = "",
+    ) -> None:
+        """Set job metadata for reporting.
+
+        Args:
+            job_name: Human-readable job name.
+            sources: List of source directories.
+            destination: Destination directory.
+            organization_mode: Organization mode used.
+        """
+        self._current_job_name = job_name
+        self._job_sources = sources or []
+        self._job_destination = destination
+        self._job_organization_mode = organization_mode
+
+    def _log(self, level: str, message: str) -> None:
+        """Log a message if logging is enabled.
+
+        Args:
+            level: Log level (debug, info, warning, error).
+            message: Message to log.
+        """
+        if not self._enable_logging or not self._logger:
+            return
+
+        if level == "debug":
+            self._logger.debug(message)
+        elif level == "info":
+            self._logger.info(message)
+        elif level == "warning":
+            self._logger.warning(message)
+        elif level == "error":
+            self._logger.error(message)
 
     def _set_state(self, new_state: RunnerState) -> None:
         """Set the runner state and emit an event."""
@@ -209,6 +288,13 @@ class JobRunner:
         self._stop_requested.clear()
         self._pause_event.set()
         self._report = None
+        self._job_report = None
+        self._start_time_iso = datetime.now().isoformat()
+
+        # Log job start
+        job_name = self._current_job_name or job_id
+        self._log("info", f"=== JOB START: {job_name} (ID: {job_id}) ===")
+        self._log("info", f"Total files to process: {len(plan.items)}, Dry run: {dry_run}")
 
         self._progress = RunnerProgress(
             job_id=job_id,
@@ -227,6 +313,7 @@ class JobRunner:
         )
         self._thread.start()
         return True
+
 
     def resume_from_checkpoint(
         self,
@@ -254,6 +341,13 @@ class JobRunner:
         self._stop_requested.clear()
         self._pause_event.set()
         self._report = None
+        self._job_report = None
+        self._start_time_iso = datetime.now().isoformat()
+
+        # Log resume
+        job_name = self._current_job_name or job_id
+        msg = f"=== JOB RESUME: {job_name} (ID: {job_id}) from checkpoint {checkpoint_index} ==="
+        self._log("info", msg)
 
         # Calculate already processed stats
         bytes_already_copied = sum(
@@ -291,6 +385,7 @@ class JobRunner:
         if self.state != RunnerState.RUNNING:
             return False
 
+        self._log("info", "Job pause requested")
         self._pause_event.clear()
         self._set_state(RunnerState.PAUSED)
         return True
@@ -304,6 +399,7 @@ class JobRunner:
         if self.state != RunnerState.PAUSED:
             return False
 
+        self._log("info", "Job resumed")
         self._set_state(RunnerState.RUNNING)
         self._pause_event.set()
         return True
@@ -317,6 +413,7 @@ class JobRunner:
         if not self.is_running:
             return False
 
+        self._log("info", "Job stop requested")
         self._stop_requested.set()
         self._pause_event.set()  # Unblock if paused
         self._set_state(RunnerState.STOP_REQUESTED)
@@ -349,6 +446,18 @@ class JobRunner:
         files_skipped = 0
         files_failed = 0
 
+        # Initialize job report
+        job_name = self._current_job_name or self._current_job_id or "unknown"
+        job_report = JobReport(
+            job_id=self._current_job_id or "",
+            job_name=job_name,
+            start_time=self._start_time_iso,
+            sources=self._job_sources,
+            destination=self._job_destination,
+            organization_mode=self._job_organization_mode,
+            dry_run=dry_run,
+        )
+
         # Count already processed items
         for i in range(self._checkpoint_index):
             item = plan.items[i]
@@ -378,6 +487,7 @@ class JobRunner:
                         break
 
                 item = plan.items[i]
+                source_name = Path(item.source).name
 
                 # Emit file started event
                 self._emit_event(
@@ -399,6 +509,15 @@ class JobRunner:
                 ):
                     report.skipped += 1
                     files_skipped += 1
+                    reason = item.reason or "File already exists"
+                    self._log("info", f"[SKIPPED] {source_name} ({reason})")
+                    job_report.add_operation(
+                        source_path=item.source,
+                        dest_path=item.destination,
+                        status=FileOperationStatus.SKIPPED,
+                        reason=reason,
+                        size_bytes=item.size,
+                    )
                     self._emit_event(
                         RunnerEventType.FILE_SKIPPED,
                         {"index": i, "source": item.source, "reason": item.reason},
@@ -412,6 +531,14 @@ class JobRunner:
                         report.bytes_copied += item.size
                         bytes_copied_so_far += item.size
                         files_copied += 1
+                        self._log("info", f"[COPIED] {source_name} (dry-run)")
+                        job_report.add_operation(
+                            source_path=item.source,
+                            dest_path=item.destination,
+                            status=FileOperationStatus.COPIED,
+                            reason="dry-run",
+                            size_bytes=item.size,
+                        )
                         self._emit_event(
                             RunnerEventType.FILE_COMPLETED,
                             {
@@ -431,6 +558,14 @@ class JobRunner:
                             report.bytes_copied += item.size
                             bytes_copied_so_far += item.size
                             files_copied += 1
+                            self._log("info", f"[COPIED] {source_name} -> {dest_path.name}")
+                            job_report.add_operation(
+                                source_path=item.source,
+                                dest_path=item.destination,
+                                status=FileOperationStatus.COPIED,
+                                reason="",
+                                size_bytes=item.size,
+                            )
                             self._emit_event(
                                 RunnerEventType.FILE_COMPLETED,
                                 {
@@ -443,6 +578,16 @@ class JobRunner:
                             report.failed += 1
                             report.errors.append((item.source, str(e)))
                             files_failed += 1
+                            error_msg = str(e)
+                            self._log("error", f"[FAILED] {source_name} ({error_msg})")
+                            job_report.add_operation(
+                                source_path=item.source,
+                                dest_path=item.destination,
+                                status=FileOperationStatus.FAILED,
+                                reason=error_msg,
+                                size_bytes=item.size,
+                            )
+                            job_report.add_error(item.source, error_msg)
                             self._emit_event(
                                 RunnerEventType.FILE_FAILED,
                                 {"index": i, "source": item.source, "error": str(e)},
@@ -457,9 +602,28 @@ class JobRunner:
                 files_copied, files_skipped, files_failed
             )
 
+            # Finalize job report
+            job_report.set_end_time()
+            self._job_report = job_report
+
+            # Log summary
+            self._log(
+                "info",
+                f"=== JOB END: {job_name} (ID: {self._current_job_id}) ===",
+            )
+            self._log(
+                "info",
+                f"Summary: COPIED={job_report.summary.copied}, "
+                f"SKIPPED={job_report.summary.skipped}, "
+                f"FILTERED={job_report.summary.filtered}, "
+                f"FAILED={job_report.summary.failed}, "
+                f"TOTAL={job_report.summary.total}",
+            )
+
             # Determine final state
             if self._stop_requested.is_set():
                 # Job was stopped
+                self._log("info", "Job was stopped by user request")
                 self._report = report
                 self._emit_event(
                     RunnerEventType.JOB_COMPLETED,
@@ -476,6 +640,9 @@ class JobRunner:
                 self._set_state(RunnerState.DONE)
 
         except Exception as e:
+            self._log("error", f"Job failed with error: {e}")
+            job_report.set_end_time()
+            self._job_report = job_report
             self._report = report
             self._emit_event(
                 RunnerEventType.JOB_FAILED,
@@ -531,6 +698,32 @@ class JobRunner:
             RunnerEventType.PROGRESS,
             self._progress.to_dict(),
         )
+
+    def export_report_to_json(self, output_path: str | Path) -> Path | None:
+        """Export the job report to a JSON file.
+
+        Args:
+            output_path: Path for the output file.
+
+        Returns:
+            Path where the report was saved, or None if no report exists.
+        """
+        if self._job_report is None:
+            return None
+        return self._job_report.export_to_json(output_path)
+
+    def export_log_to_txt(self, output_path: str | Path) -> Path | None:
+        """Export the log entries to a .txt file.
+
+        Args:
+            output_path: Path for the output file.
+
+        Returns:
+            Path where the log was saved, or None if no logger exists.
+        """
+        if self._logger is None:
+            return None
+        return self._logger.export_to_txt(output_path)
 
 
 class JobRunnerManager:
