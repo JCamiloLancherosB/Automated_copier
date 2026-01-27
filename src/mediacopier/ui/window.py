@@ -7,7 +7,13 @@ from datetime import datetime
 
 import customtkinter as ctk
 
+from mediacopier.core.copier import CopyItemAction, CopyPlan, CopyPlanItem
 from mediacopier.core.models import CopyRules, OrganizationMode, Profile, ProfileManager
+from mediacopier.core.runner import (
+    JobRunnerManager,
+    RunnerEvent,
+    RunnerEventType,
+)
 from mediacopier.ui.job_queue import JobQueue, JobStatus
 
 
@@ -43,6 +49,7 @@ class MediaCopierUI(ctk.CTk):
 
         self._job_queue = JobQueue()
         self._profile_manager = ProfileManager()
+        self._runner_manager = JobRunnerManager()
         self._selected_job_id: str | None = None
         self._ui_queue: list[Callable[[], None]] = []
 
@@ -335,9 +342,143 @@ class MediaCopierUI(ctk.CTk):
             self._ui_queue.clear()
             for callback in queue:
                 callback()
+            # Process runner events
+            self._process_runner_events()
             self.after(UI_POLL_INTERVAL_MS, poll)
 
         self.after(UI_POLL_INTERVAL_MS, poll)
+
+    def _process_runner_events(self) -> None:
+        """Process events from the job runner."""
+        events = self._runner_manager.get_events(timeout=0.0)
+        for event in events:
+            self._handle_runner_event(event)
+
+    def _handle_runner_event(self, event: RunnerEvent) -> None:
+        """Handle a single runner event."""
+        if event.event_type == RunnerEventType.STATE_CHANGED:
+            new_state = event.data.get("new_state", "")
+            self._update_job_status_from_runner(event.job_id, new_state)
+
+        elif event.event_type == RunnerEventType.PROGRESS:
+            self._update_progress_display(event)
+
+        elif event.event_type == RunnerEventType.FILE_STARTED:
+            source = event.data.get("source", "")
+            self._log(LogLevel.INFO, f"Copiando: {source}")
+
+        elif event.event_type == RunnerEventType.FILE_COMPLETED:
+            dest = event.data.get("destination", "")
+            dry_run = event.data.get("dry_run", False)
+            if dry_run:
+                self._log(LogLevel.OK, f"[DRY-RUN] Copiado a: {dest}")
+            else:
+                self._log(LogLevel.OK, f"Copiado a: {dest}")
+
+        elif event.event_type == RunnerEventType.FILE_SKIPPED:
+            source = event.data.get("source", "")
+            reason = event.data.get("reason", "")
+            self._log(LogLevel.INFO, f"Omitido: {source} ({reason})")
+
+        elif event.event_type == RunnerEventType.FILE_FAILED:
+            source = event.data.get("source", "")
+            error = event.data.get("error", "")
+            self._log(LogLevel.ERROR, f"Error copiando {source}: {error}")
+
+        elif event.event_type == RunnerEventType.JOB_COMPLETED:
+            report = event.data.get("report", {})
+            stopped = event.data.get("stopped", False)
+            self._on_job_completed(event.job_id, report, stopped)
+
+        elif event.event_type == RunnerEventType.JOB_FAILED:
+            error = event.data.get("error", "")
+            self._log(LogLevel.ERROR, f"Job falló: {error}")
+
+    def _update_job_status_from_runner(self, job_id: str, runner_state: str) -> None:
+        """Update job status based on runner state."""
+        status_map = {
+            "pending": JobStatus.PENDING,
+            "running": JobStatus.RUNNING,
+            "paused": JobStatus.PAUSED,
+            "stop_requested": JobStatus.RUNNING,  # Still running during stop
+            "done": JobStatus.COMPLETED,
+            "failed": JobStatus.ERROR,
+        }
+        status = status_map.get(runner_state, JobStatus.PENDING)
+        try:
+            self._job_queue.update_status(job_id, status)
+            self._refresh_jobs()
+        except Exception:
+            pass
+
+    def _update_progress_display(self, event: RunnerEvent) -> None:
+        """Update the progress display from runner event."""
+        data = event.data
+        job_id = event.job_id
+
+        progress_percent = data.get("progress_percent", 0)
+        current_index = data.get("current_index", 0)
+        total_files = data.get("total_files", 0)
+        eta_seconds = data.get("eta_seconds", 0)
+        files_copied = data.get("files_copied", 0)
+        files_skipped = data.get("files_skipped", 0)
+        files_failed = data.get("files_failed", 0)
+
+        # Update job progress in queue
+        try:
+            self._job_queue.update_progress(job_id, int(progress_percent))
+            self._refresh_jobs()
+        except Exception:
+            pass
+
+        # Format ETA
+        if eta_seconds > 0:
+            minutes = int(eta_seconds // 60)
+            seconds = int(eta_seconds % 60)
+            eta_str = f"{minutes}m {seconds}s"
+        else:
+            eta_str = "--"
+
+        # Log progress periodically (every 10% or so)
+        if current_index > 0 and current_index % max(1, total_files // 10) == 0:
+            self._log(
+                LogLevel.INFO,
+                f"Progreso: {current_index}/{total_files} ({progress_percent:.1f}%) - "
+                f"ETA: {eta_str} - Copiados: {files_copied}, "
+                f"Omitidos: {files_skipped}, Errores: {files_failed}",
+            )
+
+    def _on_job_completed(
+        self, job_id: str, report: dict, stopped: bool
+    ) -> None:
+        """Handle job completion."""
+        copied = report.get("copied", 0)
+        skipped = report.get("skipped", 0)
+        failed = report.get("failed", 0)
+        bytes_copied = report.get("bytes_copied", 0)
+
+        # Format bytes
+        if bytes_copied >= 1024 * 1024 * 1024:
+            size_str = f"{bytes_copied / (1024 * 1024 * 1024):.2f} GB"
+        elif bytes_copied >= 1024 * 1024:
+            size_str = f"{bytes_copied / (1024 * 1024):.2f} MB"
+        elif bytes_copied >= 1024:
+            size_str = f"{bytes_copied / 1024:.2f} KB"
+        else:
+            size_str = f"{bytes_copied} bytes"
+
+        if stopped:
+            self._log(
+                LogLevel.WARN,
+                f"Job detenido - Copiados: {copied}, Omitidos: {skipped}, "
+                f"Errores: {failed}, Tamaño: {size_str}",
+            )
+        else:
+            self._log(
+                LogLevel.OK,
+                f"Job completado - Copiados: {copied}, Omitidos: {skipped}, "
+                f"Errores: {failed}, Tamaño: {size_str}",
+            )
 
     def enqueue_ui(self, callback: Callable[[], None]) -> None:
         self._ui_queue.append(callback)
@@ -583,44 +724,179 @@ class MediaCopierUI(ctk.CTk):
             return None
         return self._selected_job_id
 
-    def _update_job_status(self, status: JobStatus) -> None:
-        job_id = self._require_selected_job()
-        if not job_id:
-            return
-        job = self._job_queue.update_status(job_id, status)
-        self._refresh_jobs()
-        self._log(LogLevel.INFO, f"{job.name} -> {status.value}.")
+    def _create_copy_plan_for_job(self, job_id: str) -> CopyPlan | None:
+        """Create a copy plan for a job based on its items.
+
+        This is a simplified version that creates plan items from the job's item list.
+        In a full implementation, this would use the indexer and matcher.
+        """
+        try:
+            job = self._job_queue.get_job(job_id)
+        except Exception:
+            return None
+
+        # Get source and destination from UI
+        source = self._source_entry.get().strip()
+        dest = self._destination_entry.get().strip()
+
+        if not source or not dest:
+            self._show_error("Especifica origen y destino")
+            return None
+
+        # For now, create a simple plan with the items as file paths
+        # In a real implementation, this would use the matcher to find files
+        items = []
+        total_bytes = 0
+
+        for item_text in job.items:
+            # Check if item_text is a file path
+            from pathlib import Path
+
+            item_path = Path(item_text)
+            if item_path.exists() and item_path.is_file():
+                size = item_path.stat().st_size
+                dest_path = Path(dest) / item_path.name
+                items.append(
+                    CopyPlanItem(
+                        source=str(item_path),
+                        destination=str(dest_path),
+                        action=CopyItemAction.COPY,
+                        size=size,
+                    )
+                )
+                total_bytes += size
+
+        plan = CopyPlan(
+            items=items,
+            total_bytes=total_bytes,
+            files_to_copy=len(items),
+            files_to_skip=0,
+        )
+
+        return plan
 
     def _on_run_job(self) -> None:
-        self._update_job_status(JobStatus.RUNNING)
+        """Start executing the selected job."""
+        job_id = self._require_selected_job()
+        if not job_id:
+            return
+
+        try:
+            job = self._job_queue.get_job(job_id)
+        except Exception:
+            self._log(LogLevel.ERROR, "Job no encontrado.")
+            return
+
+        # Check if can run
+        if not self._runner_manager.can_edit_job(job_id):
+            self._log(LogLevel.WARN, "No se puede ejecutar este job ahora.")
+            return
+
+        # Create copy plan
+        plan = self._create_copy_plan_for_job(job_id)
+        if plan is None:
+            return
+
+        if len(plan.items) == 0:
+            self._log(
+                LogLevel.WARN,
+                "No hay archivos para copiar. Agrega rutas de archivo válidas.",
+            )
+            return
+
+        # Register and start the job
+        dry_run = job.rules_snapshot.dry_run
+        self._runner_manager.register_job(job_id, plan, dry_run=dry_run)
+
+        if self._runner_manager.start_job(job_id):
+            self._job_queue.update_status(job_id, JobStatus.RUNNING)
+            self._refresh_jobs()
+            self._log(
+                LogLevel.OK,
+                f"Ejecutando {job.name} ({len(plan.items)} archivos, "
+                f"{plan.total_bytes / (1024 * 1024):.2f} MB)"
+                + (" [DRY-RUN]" if dry_run else ""),
+            )
+        else:
+            self._log(LogLevel.ERROR, "No se pudo iniciar el job.")
 
     def _on_pause_job(self) -> None:
-        self._update_job_status(JobStatus.PAUSED)
+        """Pause the currently running job."""
+        if self._runner_manager.pause_job():
+            self._log(LogLevel.WARN, "Job pausado.")
+        else:
+            self._log(LogLevel.WARN, "No hay job en ejecución para pausar.")
 
     def _on_resume_job(self) -> None:
-        self._update_job_status(JobStatus.RUNNING)
+        """Resume the paused job."""
+        if self._runner_manager.resume_job():
+            self._log(LogLevel.OK, "Job reanudado.")
+        else:
+            self._log(LogLevel.WARN, "No hay job pausado para reanudar.")
 
     def _on_stop_job(self) -> None:
-        self._update_job_status(JobStatus.STOPPED)
+        """Stop the currently running job."""
+        if self._runner_manager.stop_job():
+            self._log(LogLevel.WARN, "Deteniendo job...")
+        else:
+            self._log(LogLevel.WARN, "No hay job en ejecución para detener.")
 
     def _on_edit_job(self) -> None:
+        """Edit the selected job."""
         job_id = self._require_selected_job()
         if not job_id:
             return
-        job = self._job_queue.get_job(job_id)
-        new_name = f"{job.name} (editado)"
+
+        # Check if can edit
+        if not self._runner_manager.can_edit_job(job_id):
+            self._log(
+                LogLevel.WARN,
+                "No se puede editar un job en ejecución. Detén el job primero.",
+            )
+            return
+
+        try:
+            job = self._job_queue.get_job(job_id)
+        except Exception:
+            self._log(LogLevel.ERROR, "Job no encontrado.")
+            return
+
+        # Load job items into the text area for editing
+        self._names_text.delete("1.0", "end")
+        self._names_text.insert("1.0", "\n".join(job.items))
+
+        # Apply job rules to UI
+        self._apply_rules_to_ui(job.rules_snapshot)
+        self._apply_organization_mode_to_ui(job.organization_mode)
+
+        # Mark job as being edited
+        new_name = f"{job.name} (editando)"
         job.name = new_name
         self._refresh_jobs()
-        self._log(LogLevel.OK, f"Job actualizado: {new_name}.")
+        self._log(LogLevel.OK, f"Editando {job.name}.")
 
     def _on_delete_job(self) -> None:
+        """Delete the selected job."""
         job_id = self._require_selected_job()
         if not job_id:
             return
-        job = self._job_queue.remove_job(job_id)
-        self._selected_job_id = None
-        self._refresh_jobs()
-        self._log(LogLevel.WARN, f"Job eliminado: {job.name}.")
+
+        # Check if can delete
+        if not self._runner_manager.can_edit_job(job_id):
+            self._log(
+                LogLevel.WARN,
+                "No se puede eliminar un job en ejecución. Detén el job primero.",
+            )
+            return
+
+        try:
+            job = self._job_queue.remove_job(job_id)
+            self._runner_manager.unregister_job(job_id)
+            self._selected_job_id = None
+            self._refresh_jobs()
+            self._log(LogLevel.WARN, f"Job eliminado: {job.name}.")
+        except Exception:
+            self._log(LogLevel.ERROR, "No se pudo eliminar el job.")
 
 
 def run_window() -> None:
