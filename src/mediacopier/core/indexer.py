@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from mediacopier.core.metadata_audio import AudioMeta
+    from mediacopier.core.metadata_video import VideoMeta
 
 
 class MediaType(Enum):
@@ -127,6 +128,7 @@ class MediaFile:
     tamano: int
     tipo: MediaType
     audio_meta: "AudioMeta | None" = None
+    video_meta: "VideoMeta | None" = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
@@ -139,6 +141,8 @@ class MediaFile:
         }
         if self.audio_meta is not None:
             result["audio_meta"] = self.audio_meta.to_dict()
+        if self.video_meta is not None:
+            result["video_meta"] = self.video_meta.to_dict()
         return result
 
     @classmethod
@@ -149,6 +153,11 @@ class MediaFile:
             from mediacopier.core.metadata_audio import AudioMeta
 
             audio_meta = AudioMeta.from_dict(data["audio_meta"])
+        video_meta = None
+        if "video_meta" in data and data["video_meta"] is not None:
+            from mediacopier.core.metadata_video import VideoMeta
+
+            video_meta = VideoMeta.from_dict(data["video_meta"])
         return cls(
             path=data["path"],
             nombre_base=data["nombre_base"],
@@ -156,6 +165,7 @@ class MediaFile:
             tamano=data["tamano"],
             tipo=MediaType(data["tipo"]),
             audio_meta=audio_meta,
+            video_meta=video_meta,
         )
 
     @classmethod
@@ -164,18 +174,24 @@ class MediaFile:
 
         Args:
             file_path: Path to the file.
-            extract_metadata: Whether to extract audio metadata for audio files.
+            extract_metadata: Whether to extract audio/video metadata for media files.
 
         Returns:
             MediaFile instance.
         """
         media_type = detect_media_type(file_path.suffix)
         audio_meta = None
+        video_meta = None
 
         if extract_metadata and media_type == MediaType.AUDIO:
             from mediacopier.core.metadata_audio import extract_audio_metadata
 
             audio_meta = extract_audio_metadata(file_path)
+
+        if extract_metadata and media_type == MediaType.VIDEO:
+            from mediacopier.core.metadata_video import extract_video_metadata
+
+            video_meta = extract_video_metadata(file_path)
 
         return cls(
             path=str(file_path),
@@ -184,6 +200,7 @@ class MediaFile:
             tamano=file_path.stat().st_size,
             tipo=media_type,
             audio_meta=audio_meta,
+            video_meta=video_meta,
         )
 
 
