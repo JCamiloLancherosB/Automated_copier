@@ -989,3 +989,588 @@ class TestOrganizationModes:
         assert len(plan.items) == 1
         # Should contain the request name (filename in this case)
         assert "song.mp3" in plan.items[0].destination or "song" in plan.items[0].destination
+
+    def test_scatter_by_genre_includes_artist_subfolder(self, tmp_path: Path) -> None:
+        """Test SCATTER_BY_GENRE creates Genre/Artist/filename structure."""
+        dest_root = tmp_path / "dest"
+
+        match = self._create_match_with_metadata(
+            tmp_path, "song.mp3", artist="The Beatles", genre="Rock"
+        )
+
+        plan = build_copy_plan(
+            matches=[match],
+            organization_mode=OrganizationMode.SCATTER_BY_GENRE,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 1
+        dest_path = Path(plan.items[0].destination)
+        # Should have Genre/Artist structure
+        assert "Rock" in plan.items[0].destination
+        assert "The Beatles" in plan.items[0].destination
+        # Genre should be parent of Artist
+        parts = dest_path.parts
+        rock_idx = parts.index("Rock")
+        beatles_idx = parts.index("The Beatles")
+        assert rock_idx < beatles_idx
+
+    def test_keep_relative_preserves_structure(self, tmp_path: Path) -> None:
+        """Test KEEP_RELATIVE preserves relative path from source root."""
+        dest_root = tmp_path / "dest"
+        source_root = tmp_path / "source"
+        subdir = source_root / "subdir" / "nested"
+        subdir.mkdir(parents=True)
+        source_file = subdir / "song.mp3"
+        source_file.write_bytes(b"test content")
+
+        media_file = MediaFile(
+            path=str(source_file),
+            nombre_base="song",
+            extension=".mp3",
+            tamano=12,
+            tipo=MediaType.AUDIO,
+        )
+        candidate = MatchCandidate(
+            media_file=media_file,
+            score=95.0,
+            reason="test",
+            is_exact=True,
+            normalized_name="song",
+        )
+        requested = RequestedItem(
+            tipo=RequestedItemType.SONG,
+            texto_original="song.mp3",
+        )
+        match_result = MatchResult(
+            requested_item=requested,
+            candidates=[candidate],
+            best_match=candidate,
+            match_found=True,
+        )
+
+        plan = build_copy_plan(
+            matches=[match_result],
+            organization_mode=OrganizationMode.KEEP_RELATIVE,
+            dest_root=str(dest_root),
+            source_root=str(source_root),
+        )
+
+        assert len(plan.items) == 1
+        # Should preserve subdir/nested/song.mp3 structure
+        assert "subdir" in plan.items[0].destination
+        assert "nested" in plan.items[0].destination
+
+
+class TestSanitization:
+    """Tests for multiplatform folder name sanitization."""
+
+    def test_sanitize_removes_windows_invalid_chars(self) -> None:
+        """Test that Windows invalid characters are removed."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        # Test characters: < > : " / \ | ? *
+        # Underscores are normalized to spaces
+        assert sanitize_folder_name("Test<Name>") == "Test Name"
+        assert sanitize_folder_name('Hello:World/Test') == "Hello World Test"
+        assert sanitize_folder_name("File?Name*") == "File Name"
+        assert sanitize_folder_name('"Quoted"') == "Quoted"
+
+    def test_sanitize_removes_control_characters(self) -> None:
+        """Test that control characters are removed."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        # Tab and newline
+        assert sanitize_folder_name("Hello\tWorld") == "Hello World"
+        assert sanitize_folder_name("Hello\nWorld") == "Hello World"
+
+    def test_sanitize_removes_leading_trailing_dots_spaces(self) -> None:
+        """Test that leading/trailing dots and spaces are removed."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        assert sanitize_folder_name("  hello  ") == "hello"
+        assert sanitize_folder_name("...test...") == "test"
+        assert sanitize_folder_name(". . test . .") == "test"
+
+    def test_sanitize_collapses_multiple_spaces(self) -> None:
+        """Test that multiple spaces are collapsed."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        assert sanitize_folder_name("Hello    World") == "Hello World"
+        assert sanitize_folder_name("Multiple   Spaces   Here") == "Multiple Spaces Here"
+
+    def test_sanitize_handles_windows_reserved_names(self) -> None:
+        """Test that Windows reserved names are handled."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        # Direct reserved names should be modified
+        assert sanitize_folder_name("CON") == "CON_folder"
+        assert sanitize_folder_name("PRN") == "PRN_folder"
+        assert sanitize_folder_name("AUX") == "AUX_folder"
+        assert sanitize_folder_name("NUL") == "NUL_folder"
+        assert sanitize_folder_name("COM1") == "COM1_folder"
+        assert sanitize_folder_name("LPT1") == "LPT1_folder"
+
+    def test_sanitize_handles_empty_string(self) -> None:
+        """Test that empty strings return fallback."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        assert sanitize_folder_name("") == "Unknown"
+        assert sanitize_folder_name("   ") == "Unknown"
+        assert sanitize_folder_name("...", fallback="Fallback") == "Fallback"
+
+    def test_sanitize_preserves_valid_names(self) -> None:
+        """Test that valid names are preserved."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        assert sanitize_folder_name("The Beatles") == "The Beatles"
+        assert sanitize_folder_name("Pink Floyd") == "Pink Floyd"
+        assert sanitize_folder_name("Rock-n-Roll") == "Rock-n-Roll"
+        # Underscores are normalized to spaces
+        assert sanitize_folder_name("2023_Collection") == "2023 Collection"
+        # Dashes are preserved
+        assert sanitize_folder_name("2023-Collection") == "2023-Collection"
+
+    def test_sanitize_with_custom_fallback(self) -> None:
+        """Test sanitization with custom fallback value."""
+        from mediacopier.core.copier import sanitize_folder_name
+
+        assert sanitize_folder_name("", fallback="Custom") == "Custom"
+        assert sanitize_folder_name("***", fallback="My Folder") == "My Folder"
+
+
+class TestMoviePathGeneration:
+    """Tests for movie path generation."""
+
+    def test_extract_movie_year_with_parentheses(self) -> None:
+        """Test movie year extraction with parentheses."""
+        from mediacopier.core.copier import extract_movie_info
+
+        name, year = extract_movie_info("Inception (2010)")
+        assert name == "Inception"
+        assert year == "2010"
+
+    def test_extract_movie_year_with_brackets(self) -> None:
+        """Test movie year extraction with brackets."""
+        from mediacopier.core.copier import extract_movie_info
+
+        name, year = extract_movie_info("The Matrix [1999]")
+        assert name == "The Matrix"
+        assert year == "1999"
+
+    def test_extract_movie_year_without_brackets(self) -> None:
+        """Test movie year extraction without brackets."""
+        from mediacopier.core.copier import extract_movie_info
+
+        name, year = extract_movie_info("Avatar 2009")
+        assert name == "Avatar"
+        assert year == "2009"
+
+    def test_extract_movie_no_year(self) -> None:
+        """Test movie without year."""
+        from mediacopier.core.copier import extract_movie_info
+
+        name, year = extract_movie_info("The Godfather")
+        assert name == "The Godfather"
+        assert year is None
+
+    def test_extract_movie_mismatched_brackets_ignored(self) -> None:
+        """Test that mismatched brackets don't parse incorrectly."""
+        from mediacopier.core.copier import extract_movie_info
+
+        # Mismatched brackets should not be parsed as year
+        name, year = extract_movie_info("Movie (2023]")
+        assert name == "Movie (2023]"
+        assert year is None
+
+        name, year = extract_movie_info("Movie [2023)")
+        assert name == "Movie [2023)"
+        assert year is None
+
+    def test_movie_folder_per_request(self, tmp_path: Path) -> None:
+        """Test FOLDER_PER_REQUEST creates Movies/<Name> (<Year>)/ for movies."""
+        dest_root = tmp_path / "dest"
+        source_dir = tmp_path / "source"
+        source_dir.mkdir(exist_ok=True)
+        source_file = source_dir / "movie.mkv"
+        source_file.write_bytes(b"test content")
+
+        media_file = MediaFile(
+            path=str(source_file),
+            nombre_base="movie",
+            extension=".mkv",
+            tamano=12,
+            tipo=MediaType.VIDEO,
+        )
+        candidate = MatchCandidate(
+            media_file=media_file,
+            score=95.0,
+            reason="test",
+            is_exact=True,
+            normalized_name="movie",
+        )
+        requested = RequestedItem(
+            tipo=RequestedItemType.MOVIE,
+            texto_original="Inception (2010)",
+        )
+        match_result = MatchResult(
+            requested_item=requested,
+            candidates=[candidate],
+            best_match=candidate,
+            match_found=True,
+        )
+
+        plan = build_copy_plan(
+            matches=[match_result],
+            organization_mode=OrganizationMode.FOLDER_PER_REQUEST,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 1
+        dest_path = plan.items[0].destination
+        # Should have Movies/Inception (2010)/movie.mkv structure
+        assert "Movies" in dest_path
+        assert "Inception (2010)" in dest_path
+
+    def test_movie_folder_per_request_no_year(self, tmp_path: Path) -> None:
+        """Test FOLDER_PER_REQUEST for movies without year."""
+        dest_root = tmp_path / "dest"
+        source_dir = tmp_path / "source"
+        source_dir.mkdir(exist_ok=True)
+        source_file = source_dir / "movie.mp4"
+        source_file.write_bytes(b"test content")
+
+        media_file = MediaFile(
+            path=str(source_file),
+            nombre_base="movie",
+            extension=".mp4",
+            tamano=12,
+            tipo=MediaType.VIDEO,
+        )
+        candidate = MatchCandidate(
+            media_file=media_file,
+            score=95.0,
+            reason="test",
+            is_exact=True,
+            normalized_name="movie",
+        )
+        requested = RequestedItem(
+            tipo=RequestedItemType.MOVIE,
+            texto_original="The Godfather",
+        )
+        match_result = MatchResult(
+            requested_item=requested,
+            candidates=[candidate],
+            best_match=candidate,
+            match_found=True,
+        )
+
+        plan = build_copy_plan(
+            matches=[match_result],
+            organization_mode=OrganizationMode.FOLDER_PER_REQUEST,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 1
+        dest_path = plan.items[0].destination
+        # Should have Movies/The Godfather/movie.mp4 structure
+        assert "Movies" in dest_path
+        assert "The Godfather" in dest_path
+
+
+class TestUnknownFallbacks:
+    """Tests for Unknown artist/genre fallback folders."""
+
+    def test_unknown_artist_fallback(self, tmp_path: Path) -> None:
+        """Test that missing artist uses Unknown Artist folder."""
+        dest_root = tmp_path / "dest"
+        source_dir = tmp_path / "source"
+        source_dir.mkdir(exist_ok=True)
+        source_file = source_dir / "song.mp3"
+        source_file.write_bytes(b"test content")
+
+        # No audio metadata - artist is None
+        media_file = MediaFile(
+            path=str(source_file),
+            nombre_base="song",
+            extension=".mp3",
+            tamano=12,
+            tipo=MediaType.AUDIO,
+            audio_meta=None,
+        )
+        candidate = MatchCandidate(
+            media_file=media_file,
+            score=95.0,
+            reason="test",
+            is_exact=True,
+            normalized_name="song",
+        )
+        requested = RequestedItem(
+            tipo=RequestedItemType.SONG,
+            texto_original="song",
+        )
+        match_result = MatchResult(
+            requested_item=requested,
+            candidates=[candidate],
+            best_match=candidate,
+            match_found=True,
+        )
+
+        plan = build_copy_plan(
+            matches=[match_result],
+            organization_mode=OrganizationMode.SCATTER_BY_ARTIST,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 1
+        assert "Unknown Artist" in plan.items[0].destination
+
+    def test_unknown_genre_fallback(self, tmp_path: Path) -> None:
+        """Test that missing genre uses Unknown Genre folder."""
+        dest_root = tmp_path / "dest"
+        source_dir = tmp_path / "source"
+        source_dir.mkdir(exist_ok=True)
+        source_file = source_dir / "song.mp3"
+        source_file.write_bytes(b"test content")
+
+        # Audio metadata with artist but no genre
+        audio_meta = AudioMeta(title="song", artist="Test Artist", genre="")
+        media_file = MediaFile(
+            path=str(source_file),
+            nombre_base="song",
+            extension=".mp3",
+            tamano=12,
+            tipo=MediaType.AUDIO,
+            audio_meta=audio_meta,
+        )
+        candidate = MatchCandidate(
+            media_file=media_file,
+            score=95.0,
+            reason="test",
+            is_exact=True,
+            normalized_name="song",
+        )
+        requested = RequestedItem(
+            tipo=RequestedItemType.SONG,
+            texto_original="song",
+        )
+        match_result = MatchResult(
+            requested_item=requested,
+            candidates=[candidate],
+            best_match=candidate,
+            match_found=True,
+        )
+
+        plan = build_copy_plan(
+            matches=[match_result],
+            organization_mode=OrganizationMode.SCATTER_BY_GENRE,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 1
+        assert "Unknown Genre" in plan.items[0].destination
+        assert "Test Artist" in plan.items[0].destination
+
+
+class TestAcceptanceCriteriaOrganization:
+    """Tests for acceptance criteria: 5 names → 5 folders with correct file placement."""
+
+    def test_five_artists_create_five_folders(self, tmp_path: Path) -> None:
+        """Test that 5 different artists create 5 different folders."""
+        dest_root = tmp_path / "dest"
+        dest_root.mkdir()
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+
+        artists = ["Pink Floyd", "The Beatles", "Led Zeppelin", "Queen", "AC/DC"]
+        matches = []
+
+        for i, artist in enumerate(artists):
+            source_file = source_dir / f"song{i}.mp3"
+            source_file.write_bytes(b"test content")
+
+            audio_meta = AudioMeta(title=f"Song {i}", artist=artist, genre="Rock")
+            media_file = MediaFile(
+                path=str(source_file),
+                nombre_base=f"song{i}",
+                extension=".mp3",
+                tamano=12,
+                tipo=MediaType.AUDIO,
+                audio_meta=audio_meta,
+            )
+            candidate = MatchCandidate(
+                media_file=media_file,
+                score=95.0,
+                reason="test",
+                is_exact=True,
+                normalized_name=f"song{i}",
+            )
+            requested = RequestedItem(
+                tipo=RequestedItemType.SONG,
+                texto_original=f"Song {i}",
+            )
+            match_result = MatchResult(
+                requested_item=requested,
+                candidates=[candidate],
+                best_match=candidate,
+                match_found=True,
+            )
+            matches.append(match_result)
+
+        plan = build_copy_plan(
+            matches=matches,
+            organization_mode=OrganizationMode.SCATTER_BY_ARTIST,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 5
+        assert plan.files_to_copy == 5
+
+        # Check all artist folders are unique and present
+        destinations = [item.destination for item in plan.items]
+        # Get the artist folder part from each destination
+        artist_folders = set()
+        for dest in destinations:
+            path = Path(dest)
+            # Parent should be the artist folder
+            artist_folders.add(path.parent.name)
+
+        # Should have 5 unique artist folders (AC/DC becomes AC_DC after sanitization)
+        assert len(artist_folders) == 5
+
+        # Execute the plan
+        report = execute_copy_plan(plan, dry_run=False)
+        assert report.copied == 5
+        assert report.failed == 0
+
+        # Verify folders were actually created
+        created_folders = [d for d in dest_root.iterdir() if d.is_dir()]
+        assert len(created_folders) == 5
+
+    def test_five_genres_create_five_genre_folders(self, tmp_path: Path) -> None:
+        """Test that 5 different genres create 5 different genre folders."""
+        dest_root = tmp_path / "dest"
+        dest_root.mkdir()
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+
+        genres = ["Rock", "Pop", "Jazz", "Classical", "Electronic"]
+        matches = []
+
+        for i, genre in enumerate(genres):
+            source_file = source_dir / f"song{i}.mp3"
+            source_file.write_bytes(b"test content")
+
+            audio_meta = AudioMeta(title=f"Song {i}", artist="Various Artists", genre=genre)
+            media_file = MediaFile(
+                path=str(source_file),
+                nombre_base=f"song{i}",
+                extension=".mp3",
+                tamano=12,
+                tipo=MediaType.AUDIO,
+                audio_meta=audio_meta,
+            )
+            candidate = MatchCandidate(
+                media_file=media_file,
+                score=95.0,
+                reason="test",
+                is_exact=True,
+                normalized_name=f"song{i}",
+            )
+            requested = RequestedItem(
+                tipo=RequestedItemType.SONG,
+                texto_original=f"Song {i}",
+            )
+            match_result = MatchResult(
+                requested_item=requested,
+                candidates=[candidate],
+                best_match=candidate,
+                match_found=True,
+            )
+            matches.append(match_result)
+
+        plan = build_copy_plan(
+            matches=matches,
+            organization_mode=OrganizationMode.SCATTER_BY_GENRE,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 5
+        assert plan.files_to_copy == 5
+
+        # Execute the plan
+        report = execute_copy_plan(plan, dry_run=False)
+        assert report.copied == 5
+        assert report.failed == 0
+
+        # Verify genre folders were actually created (5 genre folders)
+        genre_folders = [d for d in dest_root.iterdir() if d.is_dir()]
+        assert len(genre_folders) == 5
+
+        # Check that all genre folders have expected names
+        genre_names = {d.name for d in genre_folders}
+        for genre in genres:
+            assert genre in genre_names
+
+    def test_five_requests_create_five_request_folders(self, tmp_path: Path) -> None:
+        """Test that 5 different requests create 5 different folders."""
+        dest_root = tmp_path / "dest"
+        dest_root.mkdir()
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+
+        requests = ["My Playlist", "Road Trip", "Workout Mix", "Chill Vibes", "Party Time"]
+        matches = []
+
+        for i, request_text in enumerate(requests):
+            source_file = source_dir / f"song{i}.mp3"
+            source_file.write_bytes(b"test content")
+
+            media_file = MediaFile(
+                path=str(source_file),
+                nombre_base=f"song{i}",
+                extension=".mp3",
+                tamano=12,
+                tipo=MediaType.AUDIO,
+            )
+            candidate = MatchCandidate(
+                media_file=media_file,
+                score=95.0,
+                reason="test",
+                is_exact=True,
+                normalized_name=f"song{i}",
+            )
+            requested = RequestedItem(
+                tipo=RequestedItemType.SONG,
+                texto_original=request_text,
+            )
+            match_result = MatchResult(
+                requested_item=requested,
+                candidates=[candidate],
+                best_match=candidate,
+                match_found=True,
+            )
+            matches.append(match_result)
+
+        plan = build_copy_plan(
+            matches=matches,
+            organization_mode=OrganizationMode.FOLDER_PER_REQUEST,
+            dest_root=str(dest_root),
+        )
+
+        assert len(plan.items) == 5
+        assert plan.files_to_copy == 5
+
+        # Execute the plan
+        report = execute_copy_plan(plan, dry_run=False)
+        assert report.copied == 5
+        assert report.failed == 0
+
+        # Verify request folders were actually created
+        created_folders = [d for d in dest_root.iterdir() if d.is_dir()]
+        assert len(created_folders) == 5
+
+        # Check that all request folders have expected names
+        folder_names = {d.name for d in created_folders}
+        for request_text in requests:
+            assert request_text in folder_names
