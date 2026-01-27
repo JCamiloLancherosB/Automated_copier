@@ -148,7 +148,7 @@ class MediaCopierUI(ctk.CTk):
         self._usb_combo.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=4)
 
         ctk.CTkButton(
-            usb_frame, text="⟳ Refrescar", width=100, command=self._on_refresh_usb
+            usb_frame, text="Refrescar USB", width=100, command=self._on_refresh_usb
         ).grid(row=0, column=1, padx=2, pady=4)
 
         # Pre-create folders option
