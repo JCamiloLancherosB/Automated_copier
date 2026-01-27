@@ -1174,6 +1174,19 @@ class TestMoviePathGeneration:
         assert name == "The Godfather"
         assert year is None
 
+    def test_extract_movie_mismatched_brackets_ignored(self) -> None:
+        """Test that mismatched brackets don't parse incorrectly."""
+        from mediacopier.core.copier import extract_movie_info
+
+        # Mismatched brackets should not be parsed as year
+        name, year = extract_movie_info("Movie (2023]")
+        assert name == "Movie (2023]"
+        assert year is None
+
+        name, year = extract_movie_info("Movie [2023)")
+        assert name == "Movie [2023)"
+        assert year is None
+
     def test_movie_folder_per_request(self, tmp_path: Path) -> None:
         """Test FOLDER_PER_REQUEST creates Movies/<Name> (<Year>)/ for movies."""
         dest_root = tmp_path / "dest"

@@ -206,7 +206,10 @@ WINDOWS_RESERVED_NAMES = frozenset({
 })
 
 # Pattern to detect year in movie names like "Movie Name (2023)" or "Movie Name 2023"
-MOVIE_YEAR_PATTERN = re.compile(r"^(.+?)\s*[\(\[]?(\d{4})[\)\]]?\s*$")
+# Matches: "Name (2023)", "Name [2023]", or "Name 2023" (no brackets)
+MOVIE_YEAR_PATTERN = re.compile(
+    r"^(.+?)\s*(?:\((\d{4})\)|\[(\d{4})\]|(\d{4}))\s*$"
+)
 
 
 def sanitize_folder_name(name: str, fallback: str = "Unknown") -> str:
@@ -242,14 +245,9 @@ def sanitize_folder_name(name: str, fallback: str = "Unknown") -> str:
     # Collapse multiple spaces/underscores
     result = re.sub(r"[\s_]+", " ", result).strip()
 
-    # Check for Windows reserved names
+    # Check for Windows reserved names (exact match, case-insensitive)
     if result.upper() in WINDOWS_RESERVED_NAMES:
         result = f"{result}_folder"
-
-    # Also check reserved names with extensions (e.g., "CON.txt")
-    base_name = result.split(".")[0].upper()
-    if base_name in WINDOWS_RESERVED_NAMES:
-        result = f"_{result}"
 
     # If result is empty, use fallback
     if not result:
@@ -275,7 +273,8 @@ def extract_movie_info(name: str) -> tuple[str, str | None]:
     match = MOVIE_YEAR_PATTERN.match(name.strip())
     if match:
         movie_name = match.group(1).strip()
-        year = match.group(2)
+        # Year can be in group 2 (parentheses), group 3 (brackets), or group 4 (no brackets)
+        year = match.group(2) or match.group(3) or match.group(4)
         return movie_name, year
     return name.strip(), None
 
