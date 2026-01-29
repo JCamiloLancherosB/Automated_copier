@@ -21,7 +21,10 @@ class TechAuraSettings:
             self.api_key = os.getenv("TECHAURA_API_KEY", "")
         polling_env = os.getenv("TECHAURA_POLLING_INTERVAL")
         if polling_env:
-            self.polling_interval = int(polling_env)
+            try:
+                self.polling_interval = int(polling_env)
+            except ValueError:
+                pass  # Keep default value if env var is not a valid integer
 
 
 @dataclass
