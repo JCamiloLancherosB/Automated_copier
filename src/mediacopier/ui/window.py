@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import customtkinter as ctk
 
+from mediacopier.api.techaura_client import TechAuraClient, USBOrder
 from mediacopier.core.copier import CopyItemAction, CopyPlan, CopyPlanItem
 from mediacopier.core.models import CopyRules, OrganizationMode, Profile, ProfileManager
 from mediacopier.core.runner import (
@@ -25,6 +27,10 @@ from mediacopier.core.usb_detector import (
     get_usb_music_folder_structure,
     pre_create_folders,
     validate_usb_destination,
+)
+from mediacopier.integration.order_processor import (
+    OrderProcessorConfig,
+    TechAuraOrderProcessor,
 )
 from mediacopier.ui.job_queue import JobQueue, JobStatus
 
@@ -66,6 +72,12 @@ class MediaCopierUI(ctk.CTk):
         self._detected_usb_drives: list[RemovableDrive] = []
         self._ui_queue: list[Callable[[], None]] = []
 
+        # TechAura integration
+        self._techaura_client: Optional[TechAuraClient] = None
+        self._order_processor: Optional[TechAuraOrderProcessor] = None
+        self._selected_order_id: Optional[str] = None
+        self._techaura_orders: list[USBOrder] = []
+
         self._build_layout()
         self._start_ui_queue()
         self._refresh_profiles()
@@ -77,6 +89,7 @@ class MediaCopierUI(ctk.CTk):
         self.grid_columnconfigure(1, weight=1, uniform="cols")
         self.grid_rowconfigure(1, weight=1)
         self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
 
         self._left_panel = ctk.CTkScrollableFrame(self)
         self._left_panel.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=12, pady=12)
@@ -86,17 +99,27 @@ class MediaCopierUI(ctk.CTk):
         self._right_panel.grid_rowconfigure(1, weight=1)
 
         self._queue_panel = ctk.CTkFrame(self)
-        self._queue_panel.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self._queue_panel.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 6))
         self._queue_panel.grid_rowconfigure(1, weight=1)
 
         self._log_panel = ctk.CTkFrame(self)
-        self._log_panel.grid(row=2, column=1, sticky="nsew", padx=12, pady=(0, 12))
+        self._log_panel.grid(row=2, column=1, sticky="nsew", padx=12, pady=(0, 6))
         self._log_panel.grid_rowconfigure(1, weight=1)
+
+        # TechAura orders panel
+        self._techaura_panel = ctk.CTkFrame(self)
+        self._techaura_panel.grid(
+            row=3, column=0, columnspan=2, sticky="nsew", padx=12, pady=(0, 12)
+        )
+        self._techaura_panel.grid_rowconfigure(1, weight=1)
+        self._techaura_panel.grid_columnconfigure(0, weight=1)
+        self._techaura_panel.grid_columnconfigure(1, weight=1)
 
         self._build_left_panel()
         self._build_right_panel()
         self._build_queue_panel()
         self._build_log_panel()
+        self._build_techaura_orders_panel()
 
     def _build_left_panel(self) -> None:
         row = 0
@@ -1208,6 +1231,404 @@ class MediaCopierUI(ctk.CTk):
             self._log(LogLevel.WARN, f"Job eliminado: {job.name}.")
         except Exception:
             self._log(LogLevel.ERROR, "No se pudo eliminar el job.")
+
+    # ========== TechAura Integration Methods ==========
+
+    def _build_techaura_orders_panel(self) -> None:
+        """Panel para mostrar y gestionar pedidos de TechAura."""
+        # Header
+        header_frame = ctk.CTkFrame(self._techaura_panel)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(12, 8))
+        header_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            header_frame, text="Pedidos TechAura", font=("Arial", 18, "bold")
+        ).grid(row=0, column=0, sticky="w", padx=(0, 16))
+
+        # Refresh button
+        ctk.CTkButton(
+            header_frame,
+            text="Actualizar pedidos",
+            width=150,
+            command=self._on_refresh_techaura_orders,
+        ).grid(row=0, column=1, sticky="e", padx=4)
+
+        # Orders list frame (left side)
+        orders_list_frame = ctk.CTkFrame(self._techaura_panel)
+        orders_list_frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 12))
+        orders_list_frame.grid_rowconfigure(1, weight=1)
+        orders_list_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(orders_list_frame, text="Pedidos pendientes:", font=("Arial", 14)).grid(
+            row=0, column=0, sticky="w", padx=8, pady=(8, 4)
+        )
+
+        self._techaura_orders_table = ctk.CTkScrollableFrame(orders_list_frame, height=120)
+        self._techaura_orders_table.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        self._techaura_orders_table.grid_columnconfigure(0, weight=2)
+        self._techaura_orders_table.grid_columnconfigure(1, weight=1)
+        self._techaura_orders_table.grid_columnconfigure(2, weight=1)
+
+        # Table headers
+        table_header_style = {"font": ("Arial", 12, "bold")}
+        ctk.CTkLabel(self._techaura_orders_table, text="Pedido", **table_header_style).grid(
+            row=0, column=0, sticky="w", padx=4
+        )
+        ctk.CTkLabel(self._techaura_orders_table, text="Cliente", **table_header_style).grid(
+            row=0, column=1, sticky="w", padx=4
+        )
+        ctk.CTkLabel(self._techaura_orders_table, text="Tipo", **table_header_style).grid(
+            row=0, column=2, sticky="w", padx=4
+        )
+
+        # Order details frame (right side)
+        details_frame = ctk.CTkFrame(self._techaura_panel)
+        details_frame.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 12))
+        details_frame.grid_rowconfigure(1, weight=1)
+        details_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(details_frame, text="Detalles del pedido:", font=("Arial", 14)).grid(
+            row=0, column=0, sticky="w", padx=8, pady=(8, 4)
+        )
+
+        self._techaura_details_text = ctk.CTkTextbox(details_frame, wrap="word", height=100)
+        self._techaura_details_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
+        self._techaura_details_text.configure(state="disabled")
+
+        # Action buttons for orders
+        buttons_frame = ctk.CTkFrame(details_frame)
+        buttons_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 8))
+        buttons_frame.grid_columnconfigure(0, weight=1)
+        buttons_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="Ver detalles",
+            command=self._on_view_order_details,
+        ).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="Confirmar y grabar",
+            fg_color="#34a853",
+            hover_color="#2d9148",
+            command=self._on_confirm_and_burn_order,
+        ).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+
+    def _on_refresh_techaura_orders(self) -> None:
+        """Actualizar lista de pedidos de TechAura."""
+        if self._order_processor is None:
+            # Initialize order processor if not already done
+            self._init_techaura_processor()
+
+        if self._order_processor is None:
+            self._log(LogLevel.WARN, "No se pudo inicializar el procesador TechAura.")
+            return
+
+        try:
+            self._techaura_orders = self._order_processor.fetch_pending_orders()
+
+            # Also add any locally pending orders
+            for order_id, pending in self._order_processor.pending_orders.items():
+                if pending.order not in self._techaura_orders:
+                    self._techaura_orders.append(pending.order)
+
+            self._refresh_techaura_orders_list()
+            self._log(
+                LogLevel.INFO, f"Se encontraron {len(self._techaura_orders)} pedidos pendientes."
+            )
+        except Exception as e:
+            self._log(LogLevel.ERROR, f"Error al obtener pedidos: {str(e)}")
+
+    def _init_techaura_processor(self) -> None:
+        """Inicializar el procesador de TechAura."""
+        try:
+            self._techaura_client = TechAuraClient()
+            config = OrderProcessorConfig(
+                content_sources={
+                    "music": "",  # Se configurará desde variables de entorno
+                    "videos": "",
+                    "movies": "",
+                },
+                polling_interval_seconds=60,
+                auto_start_burning=False,
+            )
+            self._order_processor = TechAuraOrderProcessor(
+                self._techaura_client, self._job_queue, config
+            )
+            self._log(LogLevel.OK, "Procesador TechAura inicializado.")
+        except Exception as e:
+            self._log(LogLevel.ERROR, f"Error al inicializar TechAura: {str(e)}")
+
+    def _refresh_techaura_orders_list(self) -> None:
+        """Refrescar la lista visual de pedidos TechAura."""
+        # Clear existing rows (except headers)
+        for widget in self._techaura_orders_table.winfo_children():
+            info = widget.grid_info()
+            if info and int(info.get("row", 0)) > 0:
+                widget.destroy()
+
+        # Add order rows
+        for idx, order in enumerate(self._techaura_orders):
+            row = idx + 1
+
+            # Order number label (clickable)
+            order_label = ctk.CTkLabel(
+                self._techaura_orders_table,
+                text=order.order_number,
+                cursor="hand2",
+            )
+            order_label.grid(row=row, column=0, sticky="w", padx=4, pady=2)
+            order_label.bind("<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid))
+
+            # Customer name
+            customer_label = ctk.CTkLabel(
+                self._techaura_orders_table,
+                text=order.customer_name[:20] + ("..." if len(order.customer_name) > 20 else ""),
+            )
+            customer_label.grid(row=row, column=1, sticky="w", padx=4, pady=2)
+            customer_label.bind(
+                "<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid)
+            )
+
+            # Product type
+            type_label = ctk.CTkLabel(self._techaura_orders_table, text=order.product_type)
+            type_label.grid(row=row, column=2, sticky="w", padx=4, pady=2)
+            type_label.bind("<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid))
+
+    def _on_select_order(self, order_id: str) -> None:
+        """Seleccionar un pedido de la lista."""
+        self._selected_order_id = order_id
+        self._update_order_details_display()
+
+    def _update_order_details_display(self) -> None:
+        """Actualizar el display de detalles del pedido seleccionado."""
+        self._techaura_details_text.configure(state="normal")
+        self._techaura_details_text.delete("1.0", "end")
+
+        if self._selected_order_id is None:
+            self._techaura_details_text.insert("1.0", "Selecciona un pedido para ver detalles.")
+            self._techaura_details_text.configure(state="disabled")
+            return
+
+        # Find the selected order
+        order = None
+        for o in self._techaura_orders:
+            if o.order_id == self._selected_order_id:
+                order = o
+                break
+
+        if order is None:
+            self._techaura_details_text.insert("1.0", "Pedido no encontrado.")
+            self._techaura_details_text.configure(state="disabled")
+            return
+
+        # Build details text
+        details = f"Número de pedido: {order.order_number}\n"
+        details += f"Cliente: {order.customer_name}\n"
+        details += f"Teléfono: {order.customer_phone}\n"
+        details += f"Tipo: {order.product_type}\n"
+        details += f"Capacidad USB: {order.capacity}\n"
+        details += f"Estado: {order.status}\n"
+
+        if order.genres:
+            details += f"\nGéneros: {', '.join(order.genres)}\n"
+        if order.artists:
+            details += f"Artistas: {', '.join(order.artists)}\n"
+        if order.videos:
+            details += f"Videos: {', '.join(order.videos)}\n"
+        if order.movies:
+            details += f"Películas: {', '.join(order.movies)}\n"
+
+        if order.created_at:
+            details += f"\nCreado: {order.created_at}\n"
+
+        self._techaura_details_text.insert("1.0", details)
+        self._techaura_details_text.configure(state="disabled")
+
+    def _on_view_order_details(self) -> None:
+        """Ver detalles completos del pedido seleccionado."""
+        if self._selected_order_id is None:
+            self._log(LogLevel.WARN, "Selecciona un pedido primero.")
+            return
+        self._update_order_details_display()
+        self._log(LogLevel.INFO, f"Mostrando detalles del pedido {self._selected_order_id}")
+
+    def _on_confirm_and_burn_order(self) -> None:
+        """Confirmar y comenzar grabación del pedido seleccionado."""
+        if self._selected_order_id is None:
+            self._log(LogLevel.WARN, "Selecciona un pedido primero.")
+            return
+
+        if self._order_processor is None:
+            self._log(LogLevel.ERROR, "Procesador TechAura no inicializado.")
+            return
+
+        # Find the selected order
+        order = None
+        for o in self._techaura_orders:
+            if o.order_id == self._selected_order_id:
+                order = o
+                break
+
+        if order is None:
+            self._log(LogLevel.ERROR, "Pedido no encontrado.")
+            return
+
+        # Show confirmation dialog
+        if self._show_order_confirmation_dialog(order):
+            # Get USB destination
+            usb_dest = self._destination_entry.get().strip()
+            if not usb_dest:
+                self._log(LogLevel.ERROR, "Selecciona un destino USB primero.")
+                return
+
+            # Queue the order if not already queued
+            if order.order_id not in self._order_processor.pending_orders:
+                self._order_processor.queue_order_for_confirmation(order)
+
+            # Confirm and start burning
+            job = self._order_processor.confirm_and_start_burning(order.order_id, usb_dest)
+
+            if job:
+                self._log(LogLevel.OK, f"Job creado para pedido {order.order_number}: {job.name}")
+                self._refresh_jobs()
+                self._refresh_techaura_orders_list()
+
+                # Remove order from local list
+                self._techaura_orders = [
+                    o for o in self._techaura_orders if o.order_id != order.order_id
+                ]
+                self._selected_order_id = None
+                self._update_order_details_display()
+            else:
+                self._log(LogLevel.ERROR, "No se pudo crear el job.")
+
+    def _show_order_confirmation_dialog(self, order: USBOrder) -> bool:
+        """Mostrar diálogo con detalles del pedido para confirmar grabación.
+
+        Args:
+            order: Orden USB a confirmar.
+
+        Returns:
+            True si el usuario confirmó, False si canceló.
+        """
+        # Create confirmation dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Confirmar Grabación")
+        dialog.geometry("500x450")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        result = {"confirmed": False}
+
+        # Title
+        ctk.CTkLabel(
+            dialog,
+            text="Confirmar Grabación de Pedido",
+            font=("Arial", 18, "bold"),
+        ).pack(pady=(16, 8))
+
+        # Details frame
+        details_frame = ctk.CTkFrame(dialog)
+        details_frame.pack(fill="both", expand=True, padx=16, pady=8)
+
+        # Build details text
+        details = f"Número de pedido: {order.order_number}\n"
+        details += f"Cliente: {order.customer_name}\n"
+        details += f"Teléfono: {order.customer_phone}\n"
+        details += f"Tipo de contenido: {order.product_type}\n"
+        details += f"Capacidad USB: {order.capacity}\n"
+
+        if order.genres:
+            details += "\nGéneros seleccionados:\n  - " + "\n  - ".join(order.genres) + "\n"
+        if order.artists:
+            details += "\nArtistas seleccionados:\n  - " + "\n  - ".join(order.artists) + "\n"
+        if order.videos:
+            details += "\nVideos:\n  - " + "\n  - ".join(order.videos[:5])
+            if len(order.videos) > 5:
+                details += f"\n  ... y {len(order.videos) - 5} más"
+            details += "\n"
+        if order.movies:
+            details += "\nPelículas:\n  - " + "\n  - ".join(order.movies[:5])
+            if len(order.movies) > 5:
+                details += f"\n  ... y {len(order.movies) - 5} más"
+            details += "\n"
+
+        # USB destination
+        usb_dest = self._destination_entry.get().strip()
+        details += f"\nDestino USB: {usb_dest or '(No seleccionado)'}\n"
+
+        details_text = ctk.CTkTextbox(details_frame, wrap="word")
+        details_text.pack(fill="both", expand=True, padx=8, pady=8)
+        details_text.insert("1.0", details)
+        details_text.configure(state="disabled")
+
+        # Buttons frame
+        buttons_frame = ctk.CTkFrame(dialog)
+        buttons_frame.pack(fill="x", padx=16, pady=(8, 16))
+
+        def on_confirm() -> None:
+            result["confirmed"] = True
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            result["confirmed"] = False
+            dialog.destroy()
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="Cancelar",
+            fg_color="#666666",
+            hover_color="#555555",
+            command=on_cancel,
+        ).pack(side="left", padx=8, pady=8)
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="Confirmar Grabación",
+            fg_color="#34a853",
+            hover_color="#2d9148",
+            command=on_confirm,
+        ).pack(side="right", padx=8, pady=8)
+
+        # Wait for dialog to close
+        dialog.wait_window()
+
+        return result["confirmed"]
+
+    def setup_techaura_integration(
+        self,
+        content_sources: dict[str, str],
+        api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> None:
+        """Configurar la integración con TechAura.
+
+        Args:
+            content_sources: Diccionario de rutas de contenido {'music': '/path', ...}
+            api_url: URL del API de TechAura (opcional, usa env var si no se provee)
+            api_key: Clave API de TechAura (opcional, usa env var si no se provee)
+        """
+        try:
+            self._techaura_client = TechAuraClient(base_url=api_url, api_key=api_key)
+            config = OrderProcessorConfig(
+                content_sources=content_sources,
+                polling_interval_seconds=60,
+                auto_start_burning=False,
+            )
+            self._order_processor = TechAuraOrderProcessor(
+                self._techaura_client, self._job_queue, config
+            )
+            self._log(LogLevel.OK, "Integración TechAura configurada correctamente.")
+        except Exception as e:
+            self._log(LogLevel.ERROR, f"Error al configurar TechAura: {str(e)}")
 
 
 def run_window() -> None:
