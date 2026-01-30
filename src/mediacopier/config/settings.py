@@ -149,12 +149,48 @@ class ContentSettings:
 
 
 @dataclass
+class UIState:
+    """Estado persistente de la UI."""
+
+    window_width: int = 1200
+    window_height: int = 800
+    window_x: int | None = None
+    window_y: int | None = None
+    auto_refresh_enabled: bool = True
+    last_destination: str = ""
+
+    def to_dict(self) -> dict:
+        """Convertir a diccionario."""
+        return {
+            "window_width": self.window_width,
+            "window_height": self.window_height,
+            "window_x": self.window_x,
+            "window_y": self.window_y,
+            "auto_refresh_enabled": self.auto_refresh_enabled,
+            "last_destination": self.last_destination,
+        }
+
+    @staticmethod
+    def from_dict(data: dict) -> "UIState":
+        """Crear desde diccionario."""
+        return UIState(
+            window_width=data.get("window_width", 1200),
+            window_height=data.get("window_height", 800),
+            window_x=data.get("window_x"),
+            window_y=data.get("window_y"),
+            auto_refresh_enabled=data.get("auto_refresh_enabled", True),
+            last_destination=data.get("last_destination", ""),
+        )
+
+
+@dataclass
 class Settings:
     """Configuración principal de MediaCopier."""
 
     techaura: TechAuraSettings = field(default_factory=TechAuraSettings)
     content_paths: ContentPaths = field(default_factory=ContentPaths)
     content: ContentSettings = field(default_factory=ContentSettings)
+    ui_state: UIState = field(default_factory=UIState)
 
 
 def get_settings() -> Settings:
@@ -164,3 +200,46 @@ def get_settings() -> Settings:
         Instancia de Settings con la configuración actual.
     """
     return Settings()
+
+
+def load_ui_state() -> UIState:
+    """Carga el estado de la UI desde archivo.
+
+    Returns:
+        Estado de la UI guardado o estado por defecto.
+    """
+    import json
+    from pathlib import Path
+
+    config_dir = Path.home() / ".mediacopier"
+    config_file = config_dir / "ui_state.json"
+
+    if config_file.exists():
+        try:
+            with open(config_file, "r") as f:
+                data = json.load(f)
+                return UIState.from_dict(data)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    return UIState()
+
+
+def save_ui_state(ui_state: UIState) -> None:
+    """Guarda el estado de la UI en archivo.
+
+    Args:
+        ui_state: Estado de la UI a guardar.
+    """
+    import json
+    from pathlib import Path
+
+    config_dir = Path.home() / ".mediacopier"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "ui_state.json"
+
+    try:
+        with open(config_file, "w") as f:
+            json.dump(ui_state.to_dict(), f, indent=2)
+    except IOError:
+        pass  # Silently fail if we can't save state
