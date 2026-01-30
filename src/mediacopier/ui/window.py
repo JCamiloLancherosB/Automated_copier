@@ -129,6 +129,29 @@ class MediaCopierUI(ctk.CTk):
         # Verificar conexión con TechAura después de 1 segundo
         self.after(1000, self._initial_connection_check)
 
+    def _initial_connection_check(self) -> None:
+        """Verificar conexión con TechAura al iniciar."""
+        self._log(LogLevel.INFO, "Verificando conexión con TechAura...")
+    
+        if self._techaura_client is None:
+            self._init_techaura_processor()
+    
+        if self._techaura_client is not None:
+            try:
+                connected = self._techaura_client.check_connection()
+                self._update_connection_status(connected)
+                if connected:
+                    self._log(LogLevel.OK, "✅ Conexión con TechAura establecida")
+                    self._on_refresh_techaura_orders()
+                else:
+                    self._log(LogLevel.WARN, "⚠️ No se pudo conectar con TechAura")
+            except Exception as e:
+                self._update_connection_status(False)
+                self._log(LogLevel.ERROR, f"Error al verificar conexión: {str(e)}")
+        else:
+            self._update_connection_status(False)
+            self._log(LogLevel.WARN, "⚠️ Cliente TechAura no configurado")
+
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1, uniform="cols")
         self.grid_columnconfigure(1, weight=1, uniform="cols")
@@ -1659,21 +1682,21 @@ class MediaCopierUI(ctk.CTk):
             self._connection_status_label.configure(
                 text="Conectado", text_color=Colors.CONNECTED
             )
-            if self._status_bar:
+            if self._status_bar and hasattr(self._status_bar, 'update_connection'):
                 self._status_bar.update_connection(True)
         elif reconnecting:
             self._connection_indicator.configure(text_color=Colors.WARNING)
             self._connection_status_label.configure(
                 text="Reconectando...", text_color=Colors.WARNING
             )
-            if self._status_bar:
+            if self._status_bar and hasattr(self._status_bar, 'update_connection'):
                 self._status_bar.update_connection(False)
         else:
             self._connection_indicator.configure(text_color=Colors.DISCONNECTED)
             self._connection_status_label.configure(
                 text="Desconectado", text_color=Colors.DISCONNECTED
             )
-            if self._status_bar:
+            if self._status_bar and hasattr(self._status_bar, 'update_connection'):
                 self._status_bar.update_connection(False)
 
     def _check_and_notify_new_orders(self, new_order_count: int) -> None:
