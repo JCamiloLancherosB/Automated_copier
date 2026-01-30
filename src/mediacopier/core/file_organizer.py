@@ -262,5 +262,7 @@ class FileOrganizer:
                 for _, filename in organized_files:
                     f.write(f"{filename}\n")
             return True
-        except Exception:
+        except (OSError, IOError):
+            # Log the error silently and return False
+            # The caller should handle this appropriately
             return False

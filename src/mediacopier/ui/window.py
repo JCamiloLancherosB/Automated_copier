@@ -123,6 +123,9 @@ class MediaCopierUI(ctk.CTk):
         self._log_entries: list[tuple[str, str, str]] = []  # (timestamp, level, message)
         self._log_filter_var: Optional[ctk.StringVar] = None
         self._max_log_entries: int = 1000
+        
+        # Organization system
+        self._pending_playlist: Optional[tuple] = None
 
         self._build_layout()
         self._start_ui_queue()
@@ -625,7 +628,6 @@ class MediaCopierUI(ctk.CTk):
             ("alphabetical", "Alfabético (A-Z)"),
             ("alphabetical_desc", "Alfabético (Z-A)"),
             ("by_artist", "Agrupar por artista"),
-            ("by_genre_folders", "Carpetas por género"),
             ("by_year", "Ordenar por año"),
         ]
         
@@ -849,6 +851,23 @@ class MediaCopierUI(ctk.CTk):
                 f"Job completado - Copiados: {copied}, Omitidos: {skipped}, "
                 f"Errores: {failed}, Tamaño: {size_str}",
             )
+            
+            # Create playlist if pending and no errors
+            if self._pending_playlist and failed == 0:
+                from mediacopier.core.file_organizer import FileOrganizer
+                playlist_files, playlist_path = self._pending_playlist
+                organizer = FileOrganizer()
+                try:
+                    success = organizer.create_playlist(playlist_files, str(playlist_path))
+                    if success:
+                        self._log(LogLevel.OK, f"✓ Playlist creada: {playlist_path.name}")
+                    else:
+                        self._log(LogLevel.WARN, f"⚠️ No se pudo crear playlist: {playlist_path.name}")
+                except Exception as e:
+                    self._log(LogLevel.ERROR, f"Error al crear playlist: {e}")
+                finally:
+                    self._pending_playlist = None
+            
             if failed > 0:
                 Toast.show(
                     self, f"{Emojis.WARNING} Grabación completada con errores", Toast.WARNING
@@ -1494,18 +1513,32 @@ class MediaCopierUI(ctk.CTk):
         items = []
         total_bytes = 0
         playlist_files = []
+        seen_filenames = set()
 
         for index, music_file in organized:
             source_path = Path(music_file.path)
             if not source_path.exists():
                 continue
-                
-            size = source_path.stat().st_size
+            
+            try:
+                size = source_path.stat().st_size
+            except OSError as e:
+                self._log(LogLevel.WARN, f"No se pudo leer {source_path.name}: {e}")
+                continue
             
             # Format filename with enumeration and normalization
             new_filename = organizer.format_filename(
                 index, music_file, enumerate_files, normalize_names
             )
+            
+            # Check for duplicate filenames
+            if new_filename in seen_filenames:
+                self._log(
+                    LogLevel.WARN,
+                    f"Archivo duplicado detectado: {new_filename} (se omitirá)"
+                )
+                continue
+            seen_filenames.add(new_filename)
             
             dest_path = Path(dest) / new_filename
             
@@ -1520,6 +1553,14 @@ class MediaCopierUI(ctk.CTk):
             total_bytes += size
             playlist_files.append((index, new_filename))
 
+        # Check if any files were found
+        if len(items) == 0:
+            self._log(
+                LogLevel.WARN,
+                "No se encontraron archivos de audio válidos para organizar."
+            )
+            return None
+
         plan = CopyPlan(
             items=items,
             total_bytes=total_bytes,
@@ -1527,11 +1568,12 @@ class MediaCopierUI(ctk.CTk):
             files_to_skip=0,
         )
 
-        # Create playlist if enabled
+        # Create playlist if enabled (will be created after copy, this is just preparation)
         if create_playlist and len(playlist_files) > 0:
-            playlist_path = Path(dest) / "playlist.m3u"
-            organizer.create_playlist(playlist_files, str(playlist_path))
-            self._log(LogLevel.INFO, f"Playlist creada: {playlist_path}")
+            # Note: Playlist will be created after successful copy
+            self._pending_playlist = (playlist_files, Path(dest) / "playlist.m3u")
+        else:
+            self._pending_playlist = None
 
         return plan
 
