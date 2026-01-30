@@ -33,6 +33,7 @@ from mediacopier.integration.order_processor import (
     OrderProcessorConfig,
     TechAuraOrderProcessor,
 )
+from mediacopier.persistence import JobStorage, StatsStorage
 from mediacopier.ui.components import StatusBar, Toast, Tooltip
 from mediacopier.ui.dialogs import ConfirmationDialog
 from mediacopier.ui.job_queue import JobQueue, JobStatus
@@ -93,6 +94,10 @@ class MediaCopierUI(ctk.CTk):
         self._detected_usb_drives: list[RemovableDrive] = []
         self._ui_queue: list[Callable[[], None]] = []
 
+        # Initialize persistence
+        self._job_storage = JobStorage()
+        self._stats_storage = StatsStorage(self._job_storage.storage_dir)
+
         # TechAura integration
         self._techaura_client: Optional[TechAuraClient] = None
         self._order_processor: Optional[TechAuraOrderProcessor] = None
@@ -124,6 +129,8 @@ class MediaCopierUI(ctk.CTk):
         self._refresh_profiles()
         self._refresh_usb_drives()
         self._start_auto_refresh()
+        self._restore_pending_jobs()
+        self._start_autosave()
         self._log(LogLevel.INFO, "UI lista para crear jobs.")
         
         # Verificar conexión con TechAura después de 1 segundo
@@ -151,6 +158,54 @@ class MediaCopierUI(ctk.CTk):
         else:
             self._update_connection_status(False)
             self._log(LogLevel.WARN, "⚠️ Cliente TechAura no configurado")
+
+    def _restore_pending_jobs(self) -> None:
+        """Restore pending jobs from disk."""
+        try:
+            jobs = self._job_storage.load_jobs()
+            if jobs:
+                restored_count = 0
+                for job in jobs:
+                    # Skip completed or error jobs
+                    if job.status in (JobStatus.COMPLETED, JobStatus.ERROR):
+                        continue
+                    # Reset running jobs to pending
+                    if job.status == JobStatus.RUNNING:
+                        job.status = JobStatus.PENDING
+                    # Add to queue
+                    self._job_queue._jobs[job.id] = job
+                    restored_count += 1
+                
+                if restored_count > 0:
+                    self._log(
+                        LogLevel.OK, 
+                        f"✅ Restaurados {restored_count} job(s) pendiente(s) de sesión anterior"
+                    )
+                    self._refresh_queue_panel()
+                else:
+                    self._log(LogLevel.INFO, "No hay jobs pendientes para restaurar")
+            else:
+                self._log(LogLevel.DEBUG, "No se encontraron jobs guardados")
+        except Exception as e:
+            self._log(LogLevel.WARN, f"⚠️ Error al restaurar jobs: {e}")
+
+    def _start_autosave(self) -> None:
+        """Iniciar auto-guardado cada 60 segundos."""
+        self._save_current_state()
+        self.after(60000, self._start_autosave)
+
+    def _save_current_state(self) -> None:
+        """Guardar estado actual (jobs pendientes)."""
+        try:
+            # Only save jobs that are not completed or in error state
+            pending_jobs = [
+                job for job in self._job_queue.list_jobs()
+                if job.status not in (JobStatus.COMPLETED, JobStatus.ERROR)
+            ]
+            if self._job_storage.save_jobs(pending_jobs):
+                self._log(LogLevel.DEBUG, f"Auto-guardado: {len(pending_jobs)} job(s) pendiente(s)")
+        except Exception as e:
+            self._log(LogLevel.WARN, f"Error en auto-guardado: {e}")
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1, uniform="cols")
@@ -2116,8 +2171,15 @@ class MediaCopierUI(ctk.CTk):
         return dialog.show()
 
     def destroy(self) -> None:
-        """Save UI state before closing."""
+        """Save UI state and pending jobs before closing."""
         try:
+            # Save pending jobs
+            pending_jobs = [
+                job for job in self._job_queue.list_jobs()
+                if job.status not in (JobStatus.COMPLETED, JobStatus.ERROR)
+            ]
+            self._job_storage.save_jobs(pending_jobs)
+            
             # Save window geometry
             self._ui_state.window_width = self.winfo_width()
             self._ui_state.window_height = self.winfo_height()
