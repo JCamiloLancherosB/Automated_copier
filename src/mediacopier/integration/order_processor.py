@@ -43,7 +43,7 @@ class CorruptFileError(Exception):
     pass
 
 
-class PermissionError(Exception):
+class InsufficientPermissionsError(Exception):
     """Error raised when there are insufficient permissions."""
 
     pass
@@ -183,8 +183,11 @@ class TechAuraOrderProcessor:
             self._shutdown_event.set()
             self._running = False
 
-            # Save progress for all active orders
-            for order_id, progress in self._order_progress.items():
+            # Save progress for all active orders (copy dict to avoid race conditions)
+            with self._lock:
+                progress_copy = dict(self._order_progress)
+
+            for order_id, progress in progress_copy.items():
                 if progress and not progress.is_interrupted:
                     progress.is_interrupted = True
                     self._save_progress(order_id, progress)
@@ -534,7 +537,10 @@ class TechAuraOrderProcessor:
         try:
             with open(test_file, "w") as f:
                 f.write("test")
-            os.remove(test_file)
+            try:
+                os.remove(test_file)
+            except OSError:
+                pass  # Ignore removal errors, the write succeeded
         except PermissionError:
             logger.error(f"Insufficient permissions to write to USB: {usb_path}")
             return False, f"Insufficient permissions to write to USB: {usb_path}"
@@ -678,12 +684,13 @@ class TechAuraOrderProcessor:
         """
         order_id = self._job_to_order.get(job_id)
         if order_id:
-            # Update internal progress tracking
-            if order_id in self._order_progress:
-                self._order_progress[order_id].files_copied = progress
-                # Periodically save progress
-                if progress % 10 == 0:  # Save every 10%
-                    self._save_progress(order_id, self._order_progress[order_id])
+            with self._lock:
+                # Update internal progress tracking
+                if order_id in self._order_progress:
+                    self._order_progress[order_id].files_copied = progress
+                    # Periodically save progress
+                    if progress % 10 == 0:  # Save every 10%
+                        self._save_progress(order_id, self._order_progress[order_id])
 
     def on_job_completed(self, job_id: str) -> None:
         """Callback cuando termina la grabación exitosamente.
@@ -698,8 +705,9 @@ class TechAuraOrderProcessor:
                 logger.info(f"Notified TechAura: job {job_id} completed for order {order_id}")
                 # Clean up progress file
                 self._delete_progress(order_id)
-                if order_id in self._order_progress:
-                    del self._order_progress[order_id]
+                with self._lock:
+                    if order_id in self._order_progress:
+                        del self._order_progress[order_id]
             except Exception as e:
                 logger.error(f"Failed to notify TechAura of job completion: {e}")
 
@@ -717,9 +725,10 @@ class TechAuraOrderProcessor:
                 logger.info(f"Notified TechAura: job {job_id} failed for order {order_id}")
 
                 # Save progress for potential resume
-                if order_id in self._order_progress:
-                    progress = self._order_progress[order_id]
-                    progress.is_interrupted = True
-                    self._save_progress(order_id, progress)
+                with self._lock:
+                    if order_id in self._order_progress:
+                        progress = self._order_progress[order_id]
+                        progress.is_interrupted = True
+                        self._save_progress(order_id, progress)
             except Exception as e:
                 logger.error(f"Failed to notify TechAura of job failure: {e}")

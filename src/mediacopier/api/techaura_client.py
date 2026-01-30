@@ -66,12 +66,16 @@ class CircuitBreaker:
         if not self._is_open:
             return False
 
-        # Check if timeout has passed
+        # Check if timeout has passed (half-open state)
         if self._last_failure_time is not None:
             elapsed = time.time() - self._last_failure_time
             if elapsed >= self._timeout:
-                logger.info("Circuit breaker timeout elapsed, attempting reset")
+                logger.info("Circuit breaker timeout elapsed, entering half-open state")
+                # Don't fully reset yet - allow one request to test
+                # The circuit will be properly reset on next success
                 self._is_open = False
+                # Reset failure count to give the next request a chance
+                self._failure_count = 0
                 return False
 
         return True

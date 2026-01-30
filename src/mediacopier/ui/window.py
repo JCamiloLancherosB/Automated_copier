@@ -45,6 +45,12 @@ class LogLevel:
 UI_POLL_INTERVAL_MS = 120
 AUTO_REFRESH_INTERVAL_MS = 30000  # 30 seconds for auto-refresh
 
+# Estimated time multipliers (in minutes) for recording time calculation
+# These are rough estimates based on typical content transfer rates
+ESTIMATED_TIME_PER_MUSIC_ITEM_MINUTES = 2  # Per genre or artist
+ESTIMATED_TIME_PER_VIDEO_MINUTES = 5  # Per video file
+ESTIMATED_TIME_PER_MOVIE_MINUTES = 10  # Per movie file
+
 # Organization mode translations
 ORGANIZATION_MODES = {
     "Carpeta única": OrganizationMode.SINGLE_FOLDER,
@@ -1469,14 +1475,14 @@ class MediaCopierUI(ctk.CTk):
         # Calculate estimated time based on content type and items
         estimated_minutes = 0
         if order.product_type == "music":
-            # Rough estimate: 2 minutes per genre/artist for music
-            estimated_minutes = (len(order.genres) + len(order.artists)) * 2
+            estimated_minutes = (
+                (len(order.genres) + len(order.artists))
+                * ESTIMATED_TIME_PER_MUSIC_ITEM_MINUTES
+            )
         elif order.product_type == "videos":
-            # Rough estimate: 5 minutes per video
-            estimated_minutes = len(order.videos) * 5
+            estimated_minutes = len(order.videos) * ESTIMATED_TIME_PER_VIDEO_MINUTES
         elif order.product_type == "movies":
-            # Rough estimate: 10 minutes per movie
-            estimated_minutes = len(order.movies) * 10
+            estimated_minutes = len(order.movies) * ESTIMATED_TIME_PER_MOVIE_MINUTES
 
         if estimated_minutes > 0:
             if estimated_minutes >= 60:
