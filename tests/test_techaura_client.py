@@ -87,14 +87,14 @@ class TestTechAuraClient:
         client = TechAuraClient(api_key="")
         headers = client._get_headers()
         assert headers == {"Content-Type": "application/json"}
-        assert "Authorization" not in headers
+        assert "X-API-Key" not in headers
 
     def test_get_headers_with_api_key(self) -> None:
         """Test de headers con API key."""
         client = TechAuraClient(api_key="my-secret-key")
         headers = client._get_headers()
         assert headers["Content-Type"] == "application/json"
-        assert headers["Authorization"] == "Bearer my-secret-key"
+        assert headers["X-API-Key"] == "my-secret-key"
 
 
 class TestGetPendingOrders:
@@ -263,3 +263,60 @@ class TestReportError:
         client = TechAuraClient()
         with pytest.raises(requests.HTTPError):
             client.report_error("invalid-order", "Error message")
+
+
+class TestCheckConnection:
+    """Tests para el método check_connection."""
+
+    @patch("mediacopier.api.techaura_client.requests.get")
+    def test_check_connection_success(self, mock_get: MagicMock) -> None:
+        """Test de verificación exitosa de conexión."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": True}
+        mock_get.return_value = mock_response
+
+        client = TechAuraClient(base_url="http://test.api")
+        result = client.check_connection()
+
+        assert result is True
+        # Verificar que se llamó al endpoint correcto
+        call_args = mock_get.call_args
+        assert "/api/usb-integration/health" in call_args[0][0]
+
+    @patch("mediacopier.api.techaura_client.requests.get")
+    def test_check_connection_failure_status_code(self, mock_get: MagicMock) -> None:
+        """Test de fallo de conexión con código de estado diferente a 200."""
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        mock_get.return_value = mock_response
+
+        client = TechAuraClient()
+        result = client.check_connection()
+
+        assert result is False
+
+    @patch("mediacopier.api.techaura_client.requests.get")
+    def test_check_connection_failure_no_success_in_response(self, mock_get: MagicMock) -> None:
+        """Test de fallo cuando el response no contiene success=True."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"success": False}
+        mock_get.return_value = mock_response
+
+        client = TechAuraClient()
+        result = client.check_connection()
+
+        assert result is False
+
+    @patch("mediacopier.api.techaura_client.requests.get")
+    def test_check_connection_exception(self, mock_get: MagicMock) -> None:
+        """Test de manejo de excepción al verificar conexión."""
+        import requests
+
+        mock_get.side_effect = requests.ConnectionError("Connection refused")
+
+        client = TechAuraClient()
+        result = client.check_connection()
+
+        assert result is False
