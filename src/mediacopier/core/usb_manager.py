@@ -3,10 +3,8 @@
 import hashlib
 import logging
 import os
-import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from mediacopier.api.techaura_client import USBOrder
 
@@ -259,7 +257,9 @@ class USBManager:
         except Exception as e:
             logger.error(f"Error cleaning up temp files: {e}")
 
-    def validate_path(self, path: str, must_exist: bool = True, must_be_writable: bool = False) -> bool:
+    def validate_path(
+        self, path: str, must_exist: bool = True, must_be_writable: bool = False
+    ) -> bool:
         """Validar una ruta antes de operaciones de copia.
         
         Args:

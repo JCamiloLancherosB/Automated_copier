@@ -1954,10 +1954,11 @@ class MediaCopierUI(ctk.CTk):
                 self.enqueue_ui(lambda: self._log(
                     LogLevel.WARN, "Circuit breaker abierto. Esperando para reconectar..."
                 ))
-            except Exception as e:
+            except Exception as exc:
+                error_msg = str(exc)
                 self.enqueue_ui(lambda: self._update_connection_status(False))
                 self.enqueue_ui(lambda: self._log(
-                    LogLevel.ERROR, f"Error al obtener pedidos: {str(e)}"
+                    LogLevel.ERROR, f"Error al obtener pedidos: {error_msg}"
                 ))
         finally:
             # Always clear the flag
