@@ -1574,6 +1574,12 @@ class MediaCopierUI(ctk.CTk):
             self._update_connection_status(False)
             return
 
+        # Verificar conexión antes de intentar obtener pedidos
+        if self._techaura_client and not self._techaura_client.check_connection():
+            self._update_connection_status(False)
+            self._log(LogLevel.WARN, "No se puede conectar con el servidor TechAura.")
+            return
+
         try:
             self._techaura_orders = self._order_processor.fetch_pending_orders()
 
@@ -1612,6 +1618,14 @@ class MediaCopierUI(ctk.CTk):
                 self._techaura_client, self._job_queue, config
             )
             self._log(LogLevel.OK, "Procesador TechAura inicializado.")
+            
+            # Verificar conexión inmediatamente después de inicializar
+            if self._techaura_client.check_connection():
+                self._update_connection_status(True)
+                self._log(LogLevel.OK, "Conectado con el servidor TechAura.")
+            else:
+                self._update_connection_status(False)
+                self._log(LogLevel.WARN, "No se puede conectar con el servidor TechAura.")
         except Exception as e:
             self._log(LogLevel.ERROR, f"Error al inicializar TechAura: {str(e)}")
 
