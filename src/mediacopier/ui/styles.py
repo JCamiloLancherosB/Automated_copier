@@ -23,6 +23,7 @@ class Colors:
     WARNING = "#f39c12"  # Orange
     DANGER = "#e74c3c"  # Red
     INFO = "#3498db"  # Blue
+    ERROR = "#e74c3c"  # Red (alias for consistency)
     
     # Text
     TEXT_PRIMARY = "#ecf0f1"  # Light gray

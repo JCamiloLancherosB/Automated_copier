@@ -31,6 +31,7 @@ class TestColors:
         assert Colors.WARNING
         assert Colors.DANGER
         assert Colors.INFO
+        assert Colors.ERROR  # Added to fix AttributeError in window.py line 568
 
 
 class TestEmojis:
