@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -109,6 +110,7 @@ class MediaCopierUI(ctk.CTk):
         self._auto_refresh_enabled: bool = self._ui_state.auto_refresh_enabled
         self._auto_refresh_after_id: Optional[str] = None
         self._previous_order_count: int = 0
+        self._refresh_in_progress: bool = False  # Track if refresh is running
 
         # Recording state for cancellation confirmation
         self._recording_in_progress: bool = False
@@ -1886,42 +1888,80 @@ class MediaCopierUI(ctk.CTk):
         self._initial_connection_check()
 
     def _on_refresh_techaura_orders(self) -> None:
-        """Actualizar lista de pedidos de TechAura."""
-        if self._order_processor is None:
-            # Initialize order processor if not already done
-            self._init_techaura_processor()
-
-        if self._order_processor is None:
-            self._log(LogLevel.WARN, "No se pudo inicializar el procesador TechAura.")
-            self._update_connection_status(False)
+        """Actualizar lista de pedidos de TechAura en un hilo separado."""
+        # Skip if a refresh is already in progress
+        if self._refresh_in_progress:
+            self._log(LogLevel.DEBUG, "Refresh ya en progreso, saltando...")
             return
+        
+        # Start refresh in background thread
+        self._refresh_in_progress = True
+        thread = threading.Thread(
+            target=self._refresh_techaura_orders_thread,
+            daemon=True
+        )
+        thread.start()
 
-        # Verificar conexión antes de intentar obtener pedidos
-        if self._techaura_client and not self._techaura_client.check_connection():
-            self._update_connection_status(False)
-            self._log(LogLevel.WARN, "No se puede conectar con el servidor TechAura.")
-            return
-
+    def _refresh_techaura_orders_thread(self) -> None:
+        """Hilo de fondo para actualizar pedidos de TechAura."""
         try:
-            self._techaura_orders = self._order_processor.fetch_pending_orders()
+            if self._order_processor is None:
+                # Initialize order processor if not already done
+                self.enqueue_ui(self._init_techaura_processor)
+                # Wait a bit for initialization
+                import time
+                time.sleep(0.5)
 
-            # Also add any locally pending orders
-            for order_id, pending in self._order_processor.pending_orders.items():
-                if pending.order not in self._techaura_orders:
-                    self._techaura_orders.append(pending.order)
+            if self._order_processor is None:
+                self.enqueue_ui(lambda: self._log(
+                    LogLevel.WARN, "No se pudo inicializar el procesador TechAura."
+                ))
+                self.enqueue_ui(lambda: self._update_connection_status(False))
+                return
 
-            self._refresh_techaura_orders_list()
-            self._update_connection_status(True)
-            self._check_and_notify_new_orders(len(self._techaura_orders))
-            self._log(
-                LogLevel.INFO, f"Se encontraron {len(self._techaura_orders)} pedidos pendientes."
-            )
-        except CircuitBreakerOpen:
-            self._update_connection_status(False)
-            self._log(LogLevel.WARN, "Circuit breaker abierto. Esperando para reconectar...")
-        except Exception as e:
-            self._update_connection_status(False)
-            self._log(LogLevel.ERROR, f"Error al obtener pedidos: {str(e)}")
+            # Verificar conexión antes de intentar obtener pedidos
+            if self._techaura_client and not self._techaura_client.check_connection():
+                self.enqueue_ui(lambda: self._update_connection_status(False))
+                self.enqueue_ui(lambda: self._log(
+                    LogLevel.WARN, "No se puede conectar con el servidor TechAura."
+                ))
+                return
+
+            try:
+                # Fetch orders in background (network call)
+                orders = self._order_processor.fetch_pending_orders()
+
+                # Also add any locally pending orders
+                for order_id, pending in self._order_processor.pending_orders.items():
+                    if pending.order not in orders:
+                        orders.append(pending.order)
+
+                # Update UI in main thread
+                def update_ui():
+                    self._techaura_orders = orders
+                    self._refresh_techaura_orders_list()
+                    self._update_connection_status(True)
+                    self._check_and_notify_new_orders(len(self._techaura_orders))
+                    self._log(
+                        LogLevel.INFO, 
+                        f"Se encontraron {len(self._techaura_orders)} pedidos pendientes."
+                    )
+                
+                self.enqueue_ui(update_ui)
+
+            except CircuitBreakerOpen:
+                self.enqueue_ui(lambda: self._update_connection_status(False))
+                self.enqueue_ui(lambda: self._log(
+                    LogLevel.WARN, "Circuit breaker abierto. Esperando para reconectar..."
+                ))
+            except Exception as e:
+                self.enqueue_ui(lambda: self._update_connection_status(False))
+                self.enqueue_ui(lambda: self._log(
+                    LogLevel.ERROR, f"Error al obtener pedidos: {str(e)}"
+                ))
+        finally:
+            # Always clear the flag
+            self._refresh_in_progress = False
 
     def _init_techaura_processor(self) -> None:
         """Inicializar el procesador de TechAura."""
