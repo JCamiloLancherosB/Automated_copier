@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -101,7 +102,7 @@ class TestJobStorage:
         assert jobs == []
 
     @pytest.mark.skipif(
-        not hasattr(Path(), "_flavour") or "WindowsPath" not in str(type(Path())),
+        sys.platform != "win32",
         reason="Windows path tests can only run on Windows"
     )
     def test_default_storage_dir_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:

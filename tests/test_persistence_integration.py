@@ -111,7 +111,7 @@ class TestWindowPersistenceIntegration:
     ) -> None:
         """Test the auto-save scenario every 60 seconds."""
         # Simulate multiple auto-saves
-        for i in range(3):
+        for _ in range(3):
             # Update progress as jobs run
             for job in sample_pending_jobs:
                 if job.status == JobStatus.RUNNING:
@@ -195,7 +195,7 @@ class TestWindowPersistenceIntegration:
         new_queue = JobQueue()
         loaded_jobs = job_storage.load_jobs()
         for job in loaded_jobs:
-            new_queue._jobs[job.id] = job
+            new_queue.restore_job(job)
 
         # Verify
         assert len(new_queue.list_jobs()) == 2

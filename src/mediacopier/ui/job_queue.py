@@ -96,6 +96,18 @@ class JobQueue:
         self._jobs[job.id] = job
         return job
 
+    def restore_job(self, job: Job) -> Job:
+        """Restore a job (for loading from persistence).
+
+        Args:
+            job: Job to restore.
+
+        Returns:
+            The restored Job instance.
+        """
+        self._jobs[job.id] = job
+        return job
+
     def list_jobs(self) -> list[Job]:
         return list(self._jobs.values())
 

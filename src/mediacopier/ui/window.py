@@ -172,8 +172,8 @@ class MediaCopierUI(ctk.CTk):
                     # Reset running jobs to pending
                     if job.status == JobStatus.RUNNING:
                         job.status = JobStatus.PENDING
-                    # Add to queue
-                    self._job_queue._jobs[job.id] = job
+                    # Add to queue using the public method
+                    self._job_queue.restore_job(job)
                     restored_count += 1
                 
                 if restored_count > 0:

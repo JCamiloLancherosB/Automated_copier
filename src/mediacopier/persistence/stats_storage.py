@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class StatsStorage:
@@ -42,8 +45,8 @@ class StatsStorage:
             with open(self.stats_file, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=2)
             return True
-        except Exception as e:
-            print(f"Error saving stats: {e}")
+        except (IOError, OSError) as e:
+            logger.error(f"Error saving stats: {e}")
             return False
 
     def load_stats(self) -> dict[str, Any]:
@@ -57,7 +60,8 @@ class StatsStorage:
         try:
             with open(self.stats_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.error(f"Error loading stats: {e}")
             return {"history": [], "totals": {}}
 
     def get_summary(self) -> dict[str, Any]:

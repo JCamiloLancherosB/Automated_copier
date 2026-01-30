@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mediacopier.ui.job_queue import Job
+
+logger = logging.getLogger(__name__)
 
 
 class JobStorage:
@@ -46,8 +49,8 @@ class JobStorage:
             with open(self.jobs_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             return True
-        except Exception as e:
-            print(f"Error saving jobs: {e}")
+        except (IOError, OSError) as e:
+            logger.error(f"Error saving jobs: {e}")
             return False
 
     def load_jobs(self) -> list[Job]:
@@ -64,8 +67,8 @@ class JobStorage:
             from mediacopier.ui.job_queue import Job
 
             return [Job.from_dict(d) for d in data]
-        except Exception as e:
-            print(f"Error loading jobs: {e}")
+        except (json.JSONDecodeError, IOError, OSError, KeyError) as e:
+            logger.error(f"Error loading jobs: {e}")
             return []
 
     def clear_jobs(self) -> bool:
@@ -78,6 +81,6 @@ class JobStorage:
             if self.jobs_file.exists():
                 self.jobs_file.unlink()
             return True
-        except Exception as e:
-            print(f"Error clearing jobs: {e}")
+        except (IOError, OSError) as e:
+            logger.error(f"Error clearing jobs: {e}")
             return False

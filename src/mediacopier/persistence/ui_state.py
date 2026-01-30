@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class UIStateStorage:
@@ -33,7 +36,8 @@ class UIStateStorage:
             with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=2)
             return True
-        except Exception:
+        except (IOError, OSError) as e:
+            logger.error(f"Error saving UI state: {e}")
             return False
 
     def load_state(self) -> dict[str, Any]:
@@ -47,7 +51,8 @@ class UIStateStorage:
         try:
             with open(self.state_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            logger.error(f"Error loading UI state: {e}")
             return self._default_state()
 
     def _default_state(self) -> dict[str, Any]:
