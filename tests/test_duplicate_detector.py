@@ -143,6 +143,18 @@ class TestGetFileHash:
         hash_val = detector._get_file_hash("/nonexistent/file.mp3", quick=True)
         assert hash_val == ""
 
+    def test_hash_small_file_quick_mode(self) -> None:
+        """Test quick hash calculation for files smaller than 65536 bytes."""
+        detector = DuplicateDetector()
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            # Create a small file (less than 65536 bytes)
+            tmp.write(b"small content")
+            tmp.flush()
+            hash1 = detector._get_file_hash(tmp.name, quick=True)
+            assert len(hash1) == 32  # MD5 hash length
+            assert hash1 != ""  # Should successfully hash small files
+            Path(tmp.name).unlink()
+
 
 class TestFindByHash:
     """Tests for finding duplicates by hash."""
@@ -213,7 +225,7 @@ class TestFindByMetadata:
     def test_find_by_metadata_with_mutagen(self) -> None:
         """Test finding duplicates by ID3 tags."""
         try:
-            from mutagen.easyid3 import EasyID3
+            from mutagen.easyid3 import EasyID3  # noqa: F401
         except ImportError:
             pytest.skip("mutagen not available")
 
@@ -238,7 +250,7 @@ class TestFindByMetadata:
     def test_find_by_metadata_handles_exceptions(self) -> None:
         """Test that exceptions are handled gracefully."""
         try:
-            from mutagen.easyid3 import EasyID3
+            from mutagen.easyid3 import EasyID3  # noqa: F401
         except ImportError:
             pytest.skip("mutagen not available")
 

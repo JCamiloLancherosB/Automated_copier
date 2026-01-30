@@ -614,6 +614,12 @@ class MediaCopierUI(ctk.CTk):
 
     def _scan_duplicates(self) -> None:
         """Escanear archivos seleccionados por duplicados."""
+        # Check if duplicate detection is enabled
+        if not self._detect_duplicates_var.get():
+            self._log(LogLevel.INFO, "Detección de duplicados desactivada")
+            self._duplicates_result_label.configure(text="")
+            return
+
         items = self._read_items()
         if not items:
             self._log(LogLevel.WARN, "No hay archivos en la lista para escanear")

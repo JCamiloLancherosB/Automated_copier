@@ -33,8 +33,8 @@ class DuplicateDetector:
     """Detector de archivos duplicados."""
 
     def __init__(self):
-        self._file_hashes: Dict[str, str] = {}
-        self._file_names: Dict[str, List[str]] = {}
+        """Initialize the duplicate detector."""
+        pass
 
     def find_duplicates(
         self, files: List[str], method: DuplicateMethod = DuplicateMethod.SMART
@@ -85,20 +85,31 @@ class DuplicateDetector:
         return result
 
     def _get_file_hash(self, filepath: str, quick: bool = True) -> str:
-        """Calcular hash MD5 del archivo."""
+        """Calcular hash MD5 del archivo.
+        
+        MD5 is sufficient for duplicate detection (non-cryptographic use case).
+        Quick mode reads only first and last 64KB for speed.
+        """
         hasher = hashlib.md5()
         try:
             with open(filepath, "rb") as f:
                 if quick:
-                    # Solo primeros y últimos 64KB para velocidad
-                    hasher.update(f.read(65536))
-                    f.seek(-65536, 2)
-                    hasher.update(f.read(65536))
+                    # Quick mode: read first 64KB
+                    first_chunk = f.read(65536)
+                    hasher.update(first_chunk)
+                    
+                    # Try to read last 64KB if file is large enough
+                    try:
+                        f.seek(-65536, 2)
+                        hasher.update(f.read(65536))
+                    except (OSError, IOError):
+                        # File is smaller than 65536 bytes, already fully hashed
+                        pass
                 else:
                     for chunk in iter(lambda: f.read(65536), b""):
                         hasher.update(chunk)
             return hasher.hexdigest()
-        except Exception:
+        except (IOError, OSError):
             return ""
 
     def _find_by_hash(self, files: List[str]) -> List[DuplicateGroup]:
@@ -144,7 +155,11 @@ class DuplicateDetector:
                     if key not in groups:
                         groups[key] = []
                     groups[key].append(filepath)
+            except (IOError, OSError):
+                # Expected for non-audio files or files without ID3 tags
+                continue
             except Exception:
+                # Unexpected error - skip this file
                 continue
 
         result = []
@@ -161,7 +176,7 @@ class DuplicateDetector:
         return result
 
     def _find_by_size(self, files: List[str]) -> List[DuplicateGroup]:
-        """Encontrar duplicados por tamaño de archivo."""
+        """Encontrar duplicados por tamaño de archivo + hash rápido."""
         groups: Dict[int, List[str]] = {}
 
         for filepath in files:
@@ -170,7 +185,8 @@ class DuplicateDetector:
                 if size not in groups:
                     groups[size] = []
                 groups[size].append(filepath)
-            except Exception:
+            except (IOError, OSError):
+                # Expected for missing or inaccessible files
                 continue
 
         result = []
