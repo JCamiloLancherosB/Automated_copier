@@ -1737,22 +1737,22 @@ class MediaCopierUI(ctk.CTk):
             self._connection_status_label.configure(
                 text="Conectado", text_color=Colors.CONNECTED
             )
-            if self._status_bar and hasattr(self._status_bar, 'update_connection'):
-                self._status_bar.update_connection(True)
+            if self._status_bar and hasattr(self._status_bar, 'update_connection_status'):
+                self._status_bar.update_connection_status(True)
         elif reconnecting:
             self._connection_indicator.configure(text_color=Colors.WARNING)
             self._connection_status_label.configure(
                 text="Reconectando...", text_color=Colors.WARNING
             )
-            if self._status_bar and hasattr(self._status_bar, 'update_connection'):
-                self._status_bar.update_connection(False)
+            if self._status_bar and hasattr(self._status_bar, 'update_connection_status'):
+                self._status_bar.update_connection_status(False, connecting=True)
         else:
             self._connection_indicator.configure(text_color=Colors.DISCONNECTED)
             self._connection_status_label.configure(
                 text="Desconectado", text_color=Colors.DISCONNECTED
             )
-            if self._status_bar and hasattr(self._status_bar, 'update_connection'):
-                self._status_bar.update_connection(False)
+            if self._status_bar and hasattr(self._status_bar, 'update_connection_status'):
+                self._status_bar.update_connection_status(False)
 
     def _check_and_notify_new_orders(self, new_order_count: int) -> None:
         """Check if there are new orders and show notification."""
