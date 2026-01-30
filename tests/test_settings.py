@@ -26,7 +26,7 @@ class TestTechAuraSettings:
         settings = TechAuraSettings(
             api_url="https://custom.api.com",
             api_key="custom-key",
-            polling_interval=60,
+            polling_interval_seconds=60,
         )
         assert settings.api_url == "https://custom.api.com"
         assert settings.api_key == "custom-key"
