@@ -36,6 +36,7 @@ from mediacopier.ui.job_queue import JobQueue, JobStatus
 
 
 class LogLevel:
+    DEBUG = "DEBUG"
     INFO = "INFO"
     WARN = "WARN"
     ERROR = "ERROR"
@@ -95,6 +96,11 @@ class MediaCopierUI(ctk.CTk):
         self._recording_in_progress: bool = False
         self._current_recording_job_id: Optional[str] = None
         self._recording_start_time: Optional[datetime] = None
+
+        # Log management
+        self._log_entries: list[tuple[str, str, str]] = []  # (timestamp, level, message)
+        self._log_filter_var: Optional[ctk.StringVar] = None
+        self._max_log_entries: int = 1000
 
         self._build_layout()
         self._start_ui_queue()
@@ -504,16 +510,53 @@ class MediaCopierUI(ctk.CTk):
             widget.grid(row=0, column=column, sticky="w")
 
     def _build_log_panel(self) -> None:
-        ctk.CTkLabel(self._log_panel, text="Consola de logs", font=("Arial", 18, "bold")).grid(
-            row=0, column=0, sticky="w", padx=16, pady=(16, 8)
+        """Construir panel de logs con controles."""
+        # Header con título y botones
+        header = ctk.CTkFrame(self._log_panel)
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 8))
+        header.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(header, text="Consola de logs", font=("Arial", 18, "bold")).grid(
+            row=0, column=0, sticky="w"
         )
+        
+        # Botones de acción
+        btn_frame = ctk.CTkFrame(header, fg_color="transparent")
+        btn_frame.grid(row=0, column=1, sticky="e")
+        
+        ctk.CTkButton(btn_frame, text="🗑️", width=40, command=self._clear_logs).pack(
+            side="left", padx=2
+        )
+        ctk.CTkButton(btn_frame, text="📋", width=40, command=self._copy_logs).pack(
+            side="left", padx=2
+        )
+        ctk.CTkButton(btn_frame, text="💾", width=40, command=self._export_logs).pack(
+            side="left", padx=2
+        )
+        
+        # Filtro de nivel
+        self._log_filter_var = ctk.StringVar(value="ALL")
+        filter_menu = ctk.CTkOptionMenu(
+            btn_frame, 
+            values=["ALL", "DEBUG", "INFO", "OK", "WARN", "ERROR"],
+            variable=self._log_filter_var,
+            command=self._on_filter_change,
+            width=80
+        )
+        filter_menu.pack(side="left", padx=5)
+        
+        # Área de texto para logs
         self._log_text = ctk.CTkTextbox(self._log_panel, wrap="word", height=160)
         self._log_text.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
         self._log_text.configure(state="disabled")
-        self._log_text.tag_config("INFO", foreground="#9aa0a6")
-        self._log_text.tag_config("WARN", foreground="#fbbc05")
-        self._log_text.tag_config("ERROR", foreground="#ea4335")
-        self._log_text.tag_config("OK", foreground="#34a853")
+        
+        # Configurar tags de colores
+        self._log_text._textbox.tag_configure("DEBUG", foreground="#666666")
+        self._log_text._textbox.tag_configure("INFO", foreground="#9aa0a6")
+        self._log_text._textbox.tag_configure("OK", foreground="#34a853")
+        self._log_text._textbox.tag_configure("WARN", foreground="#fbbc04")
+        self._log_text._textbox.tag_configure("ERROR", foreground="#ea4335")
+        self._log_text._textbox.tag_configure("TIMESTAMP", foreground="#666666")
 
     def _start_ui_queue(self) -> None:
         def poll() -> None:
@@ -663,16 +706,85 @@ class MediaCopierUI(ctk.CTk):
         self._ui_queue.append(callback)
 
     def _log(self, level: str, message: str) -> None:
+        """Agregar mensaje al log con formato y color."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] {level}: {message}\n"
+        self._log_entries.append((timestamp, level, message))
+        
+        # Enforce max entries limit to prevent memory leak
+        if len(self._log_entries) > self._max_log_entries:
+            self._log_entries = self._log_entries[-self._max_log_entries:]
+        
+        # Aplicar filtro actual
+        if self._should_show_log(level):
+            def append() -> None:
+                self._append_log_entry(timestamp, level, message)
+            self.enqueue_ui(append)
 
-        def append() -> None:
-            self._log_text.configure(state="normal")
-            self._log_text.insert("end", line, level)
-            self._log_text.see("end")
-            self._log_text.configure(state="disabled")
+    def _append_log_entry(self, timestamp: str, level: str, message: str) -> None:
+        """Agregar entrada formateada al widget de logs."""
+        self._log_text.configure(state="normal")
+        
+        # Insertar timestamp
+        self._log_text.insert("end", f"[{timestamp}] ", "TIMESTAMP")
+        
+        # Insertar nivel y mensaje con color
+        self._log_text.insert("end", f"{level}: ", level)
+        self._log_text.insert("end", f"{message}\n")
+        
+        self._log_text.configure(state="disabled")
+        self._log_text.see("end")
 
-        self.enqueue_ui(append)
+    def _clear_logs(self) -> None:
+        """Limpiar todos los logs."""
+        self._log_entries.clear()
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.configure(state="disabled")
+
+    def _copy_logs(self) -> None:
+        """Copiar logs al portapapeles."""
+        log_text = "\n".join([f"[{ts}] {lvl}: {msg}" for ts, lvl, msg in self._log_entries])
+        self.clipboard_clear()
+        self.clipboard_append(log_text)
+        self._log(LogLevel.INFO, "Logs copiados al portapapeles")
+
+    def _export_logs(self) -> None:
+        """Exportar logs a archivo."""
+        from tkinter import filedialog
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Log files", "*.log"), ("Text files", "*.txt")],
+            initialname=f"mediacopier_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        )
+        if filepath:
+            with open(filepath, "w", encoding="utf-8") as f:
+                for ts, lvl, msg in self._log_entries:
+                    f.write(f"[{ts}] {lvl}: {msg}\n")
+            self._log(LogLevel.OK, f"Logs exportados a: {filepath}")
+
+    def _on_filter_change(self, value: str) -> None:
+        """Cambiar filtro de logs."""
+        self._refresh_log_display()
+
+    def _should_show_log(self, level: str) -> bool:
+        """Verificar si el log debe mostrarse según el filtro."""
+        if self._log_filter_var is None:
+            return True
+        filter_value = self._log_filter_var.get()
+        if filter_value == "ALL":
+            return True
+        return level == filter_value
+
+    def _refresh_log_display(self) -> None:
+        """Refrescar display de logs según filtro."""
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        
+        for ts, lvl, msg in self._log_entries:
+            if self._should_show_log(lvl):
+                self._append_log_entry(ts, lvl, msg)
+        
+        self._log_text.configure(state="disabled")
 
     def _show_error(self, message: str) -> None:
         """Show an error message in the UI."""
