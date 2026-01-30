@@ -1,4 +1,4 @@
-"""Tests comprensivos para el cliente de TechAura."""
+"""Tests comprehensivos para el cliente de TechAura."""
 
 from typing import Any
 from unittest.mock import MagicMock
@@ -163,12 +163,12 @@ class TestGetPendingOrders:
         assert order.created_at == sample_order_data["created_at"]
         assert order.status == sample_order_data["status"]
 
-    def test_handles_pagination(
+    def test_handles_multiple_orders(
         self,
         mock_requests_get: MagicMock,
         sample_order_data: dict[str, Any],
     ) -> None:
-        """Test que maneja paginación correctamente."""
+        """Test que maneja múltiples órdenes en una respuesta."""
         # Simulando múltiples órdenes que podrían venir de paginación
         order1 = sample_order_data.copy()
         order1["order_id"] = "order-001"
@@ -284,12 +284,12 @@ class TestStartBurning:
 
         assert result is False
 
-    def test_retries_on_temporary_failure(
+    def test_succeeds_after_previous_failure(
         self,
         mock_requests_post: MagicMock,
         success_response_data: dict[str, Any],
     ) -> None:
-        """Test que simula un escenario de reintento tras fallo temporal."""
+        """Test que puede tener éxito después de un fallo previo."""
         # Primer intento falla con error temporal
         failure_response = MagicMock()
         failure_response.raise_for_status.side_effect = requests.HTTPError(
@@ -355,12 +355,12 @@ class TestCompleteBurning:
 
         assert result is False
 
-    def test_sends_notes_if_provided(
+    def test_completes_burning_endpoint(
         self,
         mock_requests_post: MagicMock,
         success_response_data: dict[str, Any],
     ) -> None:
-        """Test que el endpoint se llama correctamente (notas como feature futura)."""
+        """Test que verifica que se llama al endpoint correcto de complete-burning."""
         # El método actual no soporta notas, pero verificamos la llamada base
         mock_response = MagicMock()
         mock_response.json.return_value = success_response_data

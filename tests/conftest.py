@@ -7,15 +7,6 @@ import pytest
 
 
 @pytest.fixture
-def mock_response() -> MagicMock:
-    """Fixture que proporciona un mock de Response de requests."""
-    response = MagicMock()
-    response.status_code = 200
-    response.raise_for_status = MagicMock()
-    return response
-
-
-@pytest.fixture
 def mock_requests_get() -> Generator[MagicMock, None, None]:
     """Fixture que parchea requests.get."""
     with patch("mediacopier.api.techaura_client.requests.get") as mock_get:
