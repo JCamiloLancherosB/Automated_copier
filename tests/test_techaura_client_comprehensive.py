@@ -31,7 +31,7 @@ class TestConnectionAndAuthentication:
         assert orders == []
         mock_requests_get.assert_called_once()
         call_kwargs = mock_requests_get.call_args[1]
-        assert call_kwargs["headers"]["Authorization"] == f"Bearer {valid_api_key}"
+        assert call_kwargs["headers"]["X-API-Key"] == valid_api_key
 
     def test_client_raises_on_invalid_api_key(
         self,
@@ -247,8 +247,7 @@ class TestStartBurning:
         assert result is True
         mock_requests_post.assert_called_once()
         call_url = mock_requests_post.call_args[0][0]
-        assert "order-123" in call_url
-        assert "start-burning" in call_url
+        assert "/api/usb-integration/orders/order-123/start-burning" in call_url
 
     def test_returns_false_on_invalid_order(
         self,
@@ -373,7 +372,7 @@ class TestCompleteBurning:
         assert result is True
         # Verificamos que se llamó al endpoint correcto
         call_url = mock_requests_post.call_args[0][0]
-        assert "/api/orders/order-123/complete-burning" in call_url
+        assert "/api/usb-integration/orders/order-123/complete-burning" in call_url
 
 
 class TestReportError:

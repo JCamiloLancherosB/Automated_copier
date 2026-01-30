@@ -40,6 +40,7 @@ from mediacopier.ui.styles import Colors, Emojis
 
 
 class LogLevel:
+    DEBUG = "DEBUG"
     INFO = "INFO"
     WARN = "WARN"
     ERROR = "ERROR"
@@ -113,12 +114,20 @@ class MediaCopierUI(ctk.CTk):
         # UI components
         self._status_bar: Optional[StatusBar] = None
 
+        # Log management
+        self._log_entries: list[tuple[str, str, str]] = []  # (timestamp, level, message)
+        self._log_filter_var: Optional[ctk.StringVar] = None
+        self._max_log_entries: int = 1000
+
         self._build_layout()
         self._start_ui_queue()
         self._refresh_profiles()
         self._refresh_usb_drives()
         self._start_auto_refresh()
         self._log(LogLevel.INFO, "UI lista para crear jobs.")
+        
+        # Verificar conexión con TechAura después de 1 segundo
+        self.after(1000, self._initial_connection_check)
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1, uniform="cols")
@@ -709,16 +718,85 @@ class MediaCopierUI(ctk.CTk):
         self._ui_queue.append(callback)
 
     def _log(self, level: str, message: str) -> None:
+        """Agregar mensaje al log con formato y color."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] {level}: {message}\n"
+        self._log_entries.append((timestamp, level, message))
+        
+        # Enforce max entries limit to prevent memory leak
+        if len(self._log_entries) > self._max_log_entries:
+            self._log_entries = self._log_entries[-self._max_log_entries:]
+        
+        # Aplicar filtro actual
+        if self._should_show_log(level):
+            def append() -> None:
+                self._append_log_entry(timestamp, level, message)
+            self.enqueue_ui(append)
 
-        def append() -> None:
-            self._log_text.configure(state="normal")
-            self._log_text.insert("end", line, level)
-            self._log_text.see("end")
-            self._log_text.configure(state="disabled")
+    def _append_log_entry(self, timestamp: str, level: str, message: str) -> None:
+        """Agregar entrada formateada al widget de logs."""
+        self._log_text.configure(state="normal")
+        
+        # Insertar timestamp
+        self._log_text.insert("end", f"[{timestamp}] ", "TIMESTAMP")
+        
+        # Insertar nivel y mensaje con color
+        self._log_text.insert("end", f"{level}: ", level)
+        self._log_text.insert("end", f"{message}\n")
+        
+        self._log_text.configure(state="disabled")
+        self._log_text.see("end")
 
-        self.enqueue_ui(append)
+    def _clear_logs(self) -> None:
+        """Limpiar todos los logs."""
+        self._log_entries.clear()
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.configure(state="disabled")
+
+    def _copy_logs(self) -> None:
+        """Copiar logs al portapapeles."""
+        log_text = "\n".join([f"[{ts}] {lvl}: {msg}" for ts, lvl, msg in self._log_entries])
+        self.clipboard_clear()
+        self.clipboard_append(log_text)
+        self._log(LogLevel.INFO, "Logs copiados al portapapeles")
+
+    def _export_logs(self) -> None:
+        """Exportar logs a archivo."""
+        from tkinter import filedialog
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Log files", "*.log"), ("Text files", "*.txt")],
+            initialname=f"mediacopier_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        )
+        if filepath:
+            with open(filepath, "w", encoding="utf-8") as f:
+                for ts, lvl, msg in self._log_entries:
+                    f.write(f"[{ts}] {lvl}: {msg}\n")
+            self._log(LogLevel.OK, f"Logs exportados a: {filepath}")
+
+    def _on_filter_change(self, value: str) -> None:
+        """Cambiar filtro de logs."""
+        self._refresh_log_display()
+
+    def _should_show_log(self, level: str) -> bool:
+        """Verificar si el log debe mostrarse según el filtro."""
+        if self._log_filter_var is None:
+            return True
+        filter_value = self._log_filter_var.get()
+        if filter_value == "ALL":
+            return True
+        return level == filter_value
+
+    def _refresh_log_display(self) -> None:
+        """Refrescar display de logs según filtro."""
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        
+        for ts, lvl, msg in self._log_entries:
+            if self._should_show_log(lvl):
+                self._append_log_entry(ts, lvl, msg)
+        
+        self._log_text.configure(state="disabled")
 
     def _on_clear_logs(self) -> None:
         """Clear the log panel."""
@@ -1384,6 +1462,16 @@ class MediaCopierUI(ctk.CTk):
             command=self._on_refresh_techaura_orders,
         ).grid(row=0, column=3, sticky="e", padx=4)
 
+        # Reconnect button
+        self._reconnect_btn = ctk.CTkButton(
+            header_frame,
+            text="🔄 Reconectar",
+            width=100,
+            fg_color="#666666",
+            command=self._on_reconnect,
+        )
+        self._reconnect_btn.grid(row=0, column=4, sticky="e", padx=4)
+
         # Orders list frame (left side)
         orders_list_frame = ctk.CTkFrame(self._techaura_panel)
         orders_list_frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 12))
@@ -1644,6 +1732,17 @@ class MediaCopierUI(ctk.CTk):
         dialog.wait_window()
         return result["confirmed"]
 
+    def _on_reconnect(self) -> None:
+        """Intentar reconectar con TechAura."""
+        self._log(LogLevel.INFO, "Intentando reconectar...")
+        
+        # Reiniciar el cliente
+        self._techaura_client = None
+        self._order_processor = None
+        
+        # Reintentar conexión
+        self._initial_connection_check()
+
     def _on_refresh_techaura_orders(self) -> None:
         """Actualizar lista de pedidos de TechAura."""
         if self._order_processor is None:
@@ -1653,6 +1752,12 @@ class MediaCopierUI(ctk.CTk):
         if self._order_processor is None:
             self._log(LogLevel.WARN, "No se pudo inicializar el procesador TechAura.")
             self._update_connection_status(False)
+            return
+
+        # Verificar conexión antes de intentar obtener pedidos
+        if self._techaura_client and not self._techaura_client.check_connection():
+            self._update_connection_status(False)
+            self._log(LogLevel.WARN, "No se puede conectar con el servidor TechAura.")
             return
 
         try:
@@ -1693,6 +1798,14 @@ class MediaCopierUI(ctk.CTk):
                 self._techaura_client, self._job_queue, config
             )
             self._log(LogLevel.OK, "Procesador TechAura inicializado.")
+            
+            # Verificar conexión inmediatamente después de inicializar
+            if self._techaura_client.check_connection():
+                self._update_connection_status(True)
+                self._log(LogLevel.OK, "Conectado con el servidor TechAura.")
+            else:
+                self._update_connection_status(False)
+                self._log(LogLevel.WARN, "No se puede conectar con el servidor TechAura.")
         except Exception as e:
             self._log(LogLevel.ERROR, f"Error al inicializar TechAura: {str(e)}")
 

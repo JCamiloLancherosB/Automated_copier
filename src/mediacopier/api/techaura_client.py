@@ -162,7 +162,8 @@ class TechAuraClient:
         """Obtener headers para las peticiones HTTP."""
         headers = {"Content-Type": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            # El API de TechAura espera X-API-Key, no Bearer token
+            headers["X-API-Key"] = self.api_key
         return headers
 
     def _validate_json_response(
@@ -299,7 +300,8 @@ class TechAuraClient:
             requests.RequestException: Si hay error en la comunicación con el API.
             CircuitBreakerOpen: Si el circuit breaker está abierto.
         """
-        url = f"{self.base_url}/api/orders/pending"
+        # Endpoint correcto de USB Integration API
+        url = f"{self.base_url}/api/usb-integration/pending-orders"
         logger.info("Fetching pending orders")
 
         data = self._request_with_retry("get", url, expected_keys=["orders"])
@@ -338,7 +340,8 @@ class TechAuraClient:
             requests.RequestException: Si hay error en la comunicación con el API.
             CircuitBreakerOpen: Si el circuit breaker está abierto.
         """
-        url = f"{self.base_url}/api/orders/{order_id}/start-burning"
+        # Endpoint correcto de USB Integration API
+        url = f"{self.base_url}/api/usb-integration/orders/{order_id}/start-burning"
         logger.info(f"Starting burning for order {order_id}")
 
         data = self._request_with_retry("post", url, expected_keys=["success"])
@@ -364,7 +367,8 @@ class TechAuraClient:
             requests.RequestException: Si hay error en la comunicación con el API.
             CircuitBreakerOpen: Si el circuit breaker está abierto.
         """
-        url = f"{self.base_url}/api/orders/{order_id}/complete-burning"
+        # Endpoint correcto de USB Integration API
+        url = f"{self.base_url}/api/usb-integration/orders/{order_id}/complete-burning"
         logger.info(f"Completing burning for order {order_id}")
 
         data = self._request_with_retry("post", url, expected_keys=["success"])
@@ -391,7 +395,8 @@ class TechAuraClient:
             requests.RequestException: Si hay error en la comunicación con el API.
             CircuitBreakerOpen: Si el circuit breaker está abierto.
         """
-        url = f"{self.base_url}/api/orders/{order_id}/report-error"
+        # Endpoint correcto de USB Integration API
+        url = f"{self.base_url}/api/usb-integration/orders/{order_id}/burning-failed"
         payload = {"error_message": error_message}
         logger.error(f"Reporting error for order {order_id}: {error_message}")
 
@@ -414,11 +419,15 @@ class TechAuraClient:
             True if connection is successful, False otherwise.
         """
         try:
-            url = f"{self.base_url}/api/orders/pending"
+            # Usar el endpoint de health check de USB Integration API
+            url = f"{self.base_url}/api/usb-integration/health"
             response = requests.get(
                 url, headers=self._get_headers(), timeout=self.timeout
             )
-            return response.status_code < 500
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("success", False)
+            return False
         except Exception as e:
             logger.debug(f"Connection check failed: {e}")
             return False
