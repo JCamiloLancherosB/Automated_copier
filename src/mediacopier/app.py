@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import os
 import sys
-import os
 from typing import Any
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # Fallback if python-dotenv is not installed
+    def load_dotenv() -> None:
+        """Dummy function if dotenv is not available."""
+        pass
 
 
 def run_demo() -> dict[str, Any]:
@@ -16,6 +23,9 @@ def run_demo() -> dict[str, Any]:
 
 def main() -> None:
     """Main application entrypoint."""
+    # Load environment variables from .env file first
+    load_dotenv()
+    
     if len(sys.argv) > 1:
         arg = sys.argv[1].lower()
 
