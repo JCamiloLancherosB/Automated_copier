@@ -33,6 +33,7 @@ from mediacopier.integration.order_processor import (
     TechAuraOrderProcessor,
 )
 from mediacopier.ui.job_queue import JobQueue, JobStatus
+from mediacopier.ui.settings_dialog import SettingsDialog
 
 
 class LogLevel:
@@ -143,10 +144,19 @@ class MediaCopierUI(ctk.CTk):
     def _build_left_panel(self) -> None:
         row = 0
 
-        # Section: Configuration
-        ctk.CTkLabel(self._left_panel, text="Configuración", font=("Arial", 18, "bold")).grid(
-            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(16, 8)
+        # Section: Configuration with Settings button
+        config_header_frame = ctk.CTkFrame(self._left_panel, fg_color="transparent")
+        config_header_frame.grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 8)
         )
+        config_header_frame.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(config_header_frame, text="Configuración", font=("Arial", 18, "bold")).pack(
+            side="left", anchor="w"
+        )
+        ctk.CTkButton(
+            config_header_frame, text="⚙️", width=40, command=self._open_settings_dialog
+        ).pack(side="right")
         row += 1
 
         # Origin
@@ -954,6 +964,62 @@ class MediaCopierUI(ctk.CTk):
                     self._clear_error()
                     self._log(LogLevel.OK, f"USB seleccionada: {drive.label}")
                 break
+
+    def _open_settings_dialog(self) -> None:
+        """Open the settings configuration dialog."""
+        from mediacopier.config.settings import get_settings
+
+        # Get current settings
+        settings = get_settings()
+        current_settings = {
+            "api_url": settings.techaura.api_url,
+            "api_key": settings.techaura.api_key,
+            "music_path": str(settings.content_paths.music_path),
+            "videos_path": str(settings.content_paths.videos_path),
+            "movies_path": str(settings.content_paths.movies_path),
+        }
+
+        # Open dialog
+        dialog = SettingsDialog(self, current_settings)
+        self.wait_window(dialog)
+
+        # Apply changes if saved
+        result = dialog.get_result()
+        if result:
+            self._apply_settings(result)
+
+    def _apply_settings(self, settings: dict) -> None:
+        """Apply settings changes to the application.
+
+        Args:
+            settings: Dictionary with new settings values.
+        """
+        # Update environment variables for immediate effect
+        import os
+
+        os.environ["TECHAURA_API_URL"] = settings["api_url"]
+        os.environ["TECHAURA_API_KEY"] = settings["api_key"]
+        os.environ["CONTENT_PATH_MUSIC"] = settings["music_path"]
+        os.environ["CONTENT_PATH_VIDEOS"] = settings["videos_path"]
+        os.environ["CONTENT_PATH_MOVIES"] = settings["movies_path"]
+
+        # Reinitialize TechAura client if connected
+        if self._techaura_client or self._order_processor:
+            try:
+                content_sources = {
+                    "music": settings["music_path"],
+                    "videos": settings["videos_path"],
+                    "movies": settings["movies_path"],
+                }
+                self.setup_techaura_integration(
+                    content_sources, settings["api_url"], settings["api_key"]
+                )
+                self._log(LogLevel.OK, "Configuración aplicada exitosamente")
+            except Exception as e:
+                self._log(LogLevel.ERROR, f"Error al aplicar configuración: {str(e)}")
+        else:
+            self._log(LogLevel.OK, "Configuración guardada exitosamente")
+
 
     def _get_selected_usb_drive(self) -> RemovableDrive | None:
         """Get the currently selected USB drive."""
