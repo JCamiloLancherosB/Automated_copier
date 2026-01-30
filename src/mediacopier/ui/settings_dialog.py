@@ -263,14 +263,17 @@ class SettingsDialog(ctk.CTkToplevel):
         if self._result:
             env_vars["TECHAURA_API_URL"] = self._result["api_url"]
             env_vars["TECHAURA_API_KEY"] = self._result["api_key"]
-            env_vars["CONTENT_PATH_MUSIC"] = self._result["music_path"]
-            env_vars["CONTENT_PATH_VIDEOS"] = self._result["videos_path"]
-            env_vars["CONTENT_PATH_MOVIES"] = self._result["movies_path"]
+            env_vars["CONTENT_MUSIC_PATH"] = self._result["music_path"]
+            env_vars["CONTENT_VIDEOS_PATH"] = self._result["videos_path"]
+            env_vars["CONTENT_MOVIES_PATH"] = self._result["movies_path"]
 
-        # Write back to .env
+        # Write back to .env with restrictive permissions
         with open(env_file, "w") as f:
             for key, value in env_vars.items():
                 f.write(f"{key}={value}\n")
+
+        # Set restrictive permissions to protect sensitive data (owner read/write only)
+        env_file.chmod(0o600)
 
     def get_result(self) -> Optional[dict]:
         """Retorna el resultado del diálogo.

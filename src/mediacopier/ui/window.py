@@ -150,7 +150,7 @@ class MediaCopierUI(ctk.CTk):
             row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 8)
         )
         config_header_frame.grid_columnconfigure(0, weight=1)
-        
+
         ctk.CTkLabel(config_header_frame, text="Configuración", font=("Arial", 18, "bold")).pack(
             side="left", anchor="w"
         )
@@ -999,9 +999,9 @@ class MediaCopierUI(ctk.CTk):
 
         os.environ["TECHAURA_API_URL"] = settings["api_url"]
         os.environ["TECHAURA_API_KEY"] = settings["api_key"]
-        os.environ["CONTENT_PATH_MUSIC"] = settings["music_path"]
-        os.environ["CONTENT_PATH_VIDEOS"] = settings["videos_path"]
-        os.environ["CONTENT_PATH_MOVIES"] = settings["movies_path"]
+        os.environ["CONTENT_MUSIC_PATH"] = settings["music_path"]
+        os.environ["CONTENT_VIDEOS_PATH"] = settings["videos_path"]
+        os.environ["CONTENT_MOVIES_PATH"] = settings["movies_path"]
 
         # Reinitialize TechAura client if connected
         if self._techaura_client or self._order_processor:
@@ -1019,7 +1019,6 @@ class MediaCopierUI(ctk.CTk):
                 self._log(LogLevel.ERROR, f"Error al aplicar configuración: {str(e)}")
         else:
             self._log(LogLevel.OK, "Configuración guardada exitosamente")
-
 
     def _get_selected_usb_drive(self) -> RemovableDrive | None:
         """Get the currently selected USB drive."""

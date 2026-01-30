@@ -1,6 +1,5 @@
 """Tests para el diálogo de configuración."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -154,23 +153,21 @@ class TestSettingsDialog:
                 }
 
                 # Mock the env file path
-                with patch.object(
-                    dialog, "_save_to_env", wraps=dialog._save_to_env
-                ) as mock_save:
+                with patch.object(dialog, "_save_to_env", wraps=dialog._save_to_env):
                     # Manually write to the temp file to test
                     with open(env_file, "w") as f:
                         f.write("TECHAURA_API_URL=http://test.com\n")
                         f.write("TECHAURA_API_KEY=new-key\n")
-                        f.write("CONTENT_PATH_MUSIC=/new/music\n")
-                        f.write("CONTENT_PATH_VIDEOS=/new/videos\n")
-                        f.write("CONTENT_PATH_MOVIES=/new/movies\n")
+                        f.write("CONTENT_MUSIC_PATH=/new/music\n")
+                        f.write("CONTENT_VIDEOS_PATH=/new/videos\n")
+                        f.write("CONTENT_MOVIES_PATH=/new/movies\n")
 
                     # Verify file was written
                     assert env_file.exists()
                     content = env_file.read_text()
                     assert "TECHAURA_API_URL=http://test.com" in content
                     assert "TECHAURA_API_KEY=new-key" in content
-                    assert "CONTENT_PATH_MUSIC=/new/music" in content
+                    assert "CONTENT_MUSIC_PATH=/new/music" in content
 
                 dialog.destroy()
         except Exception:
