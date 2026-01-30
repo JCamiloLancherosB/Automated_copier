@@ -51,17 +51,29 @@ class TestEmojis:
         """Test content type emojis are defined."""
         assert Emojis.MUSIC == "🎵"
         assert Emojis.VIDEOS == "🎬"
+        assert Emojis.VIDEO == "🎬"  # Alias
         assert Emojis.MOVIES == "🎥"
+        assert Emojis.MOVIE == "🎥"  # Alias
 
     def test_info_emojis_defined(self):
         """Test info indicator emojis are defined."""
         assert Emojis.ORDER_NUMBER == "📋"
+        assert Emojis.ORDER == "📋"  # Alias
         assert Emojis.CUSTOMER == "👤"
+        assert Emojis.CLIENT == "👤"  # Alias
+        assert Emojis.PHONE == "📞"
         assert Emojis.CAPACITY == "💾"
         assert Emojis.GENRES == "🎶"
         assert Emojis.ARTISTS == "🎤"
         assert Emojis.DATE == "📅"
+        assert Emojis.CLOCK == "🕐"
         assert Emojis.USB == "💿"
+
+    def test_action_emojis_defined(self):
+        """Test action emojis are defined."""
+        assert Emojis.PLAY == "▶️"
+        assert Emojis.STOP == "⏹️"
+        assert Emojis.PAUSE == "⏸️"
 
     def test_status_emojis_defined(self):
         """Test status emojis are defined."""
@@ -141,7 +153,7 @@ class TestToast:
                         # This should not raise an exception
                         try:
                             Toast.show(mock_parent, "Test message", Toast.INFO)
-                        except Exception as e:
+                        except Exception:
                             # Some exceptions are expected in test environment without full UI
                             # We're mainly testing that the method is callable
                             pass
