@@ -1428,7 +1428,8 @@ class MediaCopierUI(ctk.CTk):
         """Verificar conexión con TechAura al iniciar."""
         self._log(LogLevel.INFO, "Verificando conexión con TechAura...")
         
-        if self._techaura_client is None:
+        # Initialize TechAura processor if not already initialized
+        if self._techaura_client is None or self._order_processor is None:
             self._init_techaura_processor()
         
         if self._techaura_client is not None:
@@ -1437,8 +1438,9 @@ class MediaCopierUI(ctk.CTk):
                 self._update_connection_status(connected)
                 if connected:
                     self._log(LogLevel.OK, "✅ Conexión con TechAura establecida")
-                    # Cargar pedidos automáticamente
-                    self._on_refresh_techaura_orders()
+                    # Cargar pedidos automáticamente si el procesador está listo
+                    if self._order_processor is not None:
+                        self._on_refresh_techaura_orders()
                 else:
                     self._log(
                         LogLevel.WARN,
