@@ -3,30 +3,18 @@
 from __future__ import annotations
 
 import sys
+import os
 from typing import Any
 
 
 def run_demo() -> dict[str, Any]:
-    """Run the application in demo mode.
-
-    Demo mode creates temporary files and demonstrates the complete
-    MediaCopier pipeline without requiring external resources.
-
-    Returns:
-        Dictionary with demo results including stats and report.
-    """
+    """Run the application in demo mode."""
     from mediacopier.core.demo import run_demo_pipeline
-
     return run_demo_pipeline()
 
 
 def main() -> None:
-    """Main application entrypoint.
-
-    Supports command line arguments:
-        --demo: Run in demo mode (prints results and exits)
-        --demo-info: Print demo mode information and exit
-    """
+    """Main application entrypoint."""
     if len(sys.argv) > 1:
         arg = sys.argv[1].lower()
 
@@ -47,7 +35,6 @@ def main() -> None:
 
         if arg == "--demo-info":
             from mediacopier.core.demo import get_demo_info
-
             info = get_demo_info()
             print("MediaCopier Demo Mode Information:")
             print(f"  Available: {info['available']}")
@@ -58,10 +45,39 @@ def main() -> None:
             print(f"Sample movie requests: {', '.join(info['movie_requests'][:3])}...")
             return
 
-    # Normal mode - run GUI (import here to avoid tkinter requirement for CLI)
-    from mediacopier.ui.window import run_window
+    # Normal mode - run GUI with TechAura integration
+    from mediacopier.ui.window import MediaCopierUI
 
-    run_window()
+    app = MediaCopierUI()
+    
+    # ========================================
+    # 🔧 CONFIGURACIÓN DE TECHAURA INTEGRATION
+    # ========================================
+    # Las rutas se toman de variables de entorno o usan defaults vacíos
+    content_sources = {
+        "music": os.environ.get("CONTENT_PATH_MUSIC", ""),
+        "videos": os.environ.get("CONTENT_PATH_VIDEOS", ""),
+        "movies": os.environ.get("CONTENT_PATH_MOVIES", ""),
+    }
+    
+    # Solo configurar si las variables de entorno están definidas
+    api_url = os.environ.get("TECHAURA_API_URL")
+    api_key = os.environ.get("TECHAURA_API_KEY")
+    
+    if api_url and api_key:
+        print(f"🔗 Configurando integración TechAura: {api_url}")
+        # Filtrar solo los paths que existen
+        valid_sources = {k: v for k, v in content_sources.items() if v and os.path.isdir(v)}
+        if valid_sources:
+            app.setup_techaura_integration(content_sources=valid_sources)
+            print(f"✅ Fuentes de contenido configuradas: {list(valid_sources.keys())}")
+        else:
+            print("⚠️ No se encontraron rutas de contenido válidas en las variables de entorno")
+    else:
+        print("⚠️ Integración TechAura no configurada (falta TECHAURA_API_URL o TECHAURA_API_KEY)")
+        print("   Ejecutando en modo standalone...")
+    
+    app.mainloop()
 
 
 if __name__ == "__main__":
