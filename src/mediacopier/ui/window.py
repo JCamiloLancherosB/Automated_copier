@@ -9,7 +9,7 @@ from typing import Optional
 
 import customtkinter as ctk
 
-from mediacopier.api.techaura_client import TechAuraClient, USBOrder
+from mediacopier.api.techaura_client import CircuitBreakerOpen, TechAuraClient, USBOrder
 from mediacopier.core.copier import CopyItemAction, CopyPlan, CopyPlanItem
 from mediacopier.core.models import CopyRules, OrganizationMode, Profile, ProfileManager
 from mediacopier.core.runner import (
@@ -43,6 +43,7 @@ class LogLevel:
 
 
 UI_POLL_INTERVAL_MS = 120
+AUTO_REFRESH_INTERVAL_MS = 30000  # 30 seconds for auto-refresh
 
 # Organization mode translations
 ORGANIZATION_MODES = {
@@ -78,10 +79,22 @@ class MediaCopierUI(ctk.CTk):
         self._selected_order_id: Optional[str] = None
         self._techaura_orders: list[USBOrder] = []
 
+        # Connection status and auto-refresh
+        self._techaura_connected: bool = False
+        self._auto_refresh_enabled: bool = True
+        self._auto_refresh_after_id: Optional[str] = None
+        self._previous_order_count: int = 0
+
+        # Recording state for cancellation confirmation
+        self._recording_in_progress: bool = False
+        self._current_recording_job_id: Optional[str] = None
+        self._recording_start_time: Optional[datetime] = None
+
         self._build_layout()
         self._start_ui_queue()
         self._refresh_profiles()
         self._refresh_usb_drives()
+        self._start_auto_refresh()
         self._log(LogLevel.INFO, "UI lista para crear jobs.")
 
     def _build_layout(self) -> None:
@@ -1239,11 +1252,41 @@ class MediaCopierUI(ctk.CTk):
         # Header
         header_frame = ctk.CTkFrame(self._techaura_panel)
         header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(12, 8))
-        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.grid_columnconfigure(2, weight=1)
 
         ctk.CTkLabel(
             header_frame, text="Pedidos TechAura", font=("Arial", 18, "bold")
         ).grid(row=0, column=0, sticky="w", padx=(0, 16))
+
+        # Connection status indicator
+        self._connection_status_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        self._connection_status_frame.grid(row=0, column=1, sticky="w", padx=8)
+
+        self._connection_indicator = ctk.CTkLabel(
+            self._connection_status_frame,
+            text="●",
+            font=("Arial", 16),
+            text_color="#666666",  # Gray = unknown
+        )
+        self._connection_indicator.grid(row=0, column=0, padx=(0, 4))
+
+        self._connection_status_label = ctk.CTkLabel(
+            self._connection_status_frame,
+            text="Desconectado",
+            font=("Arial", 12),
+            text_color="#666666",
+        )
+        self._connection_status_label.grid(row=0, column=1)
+
+        # Auto-refresh checkbox
+        self._auto_refresh_var = ctk.BooleanVar(value=True)
+        self._auto_refresh_checkbox = ctk.CTkCheckBox(
+            header_frame,
+            text="Auto-refresh (30s)",
+            variable=self._auto_refresh_var,
+            command=self._on_toggle_auto_refresh,
+        )
+        self._auto_refresh_checkbox.grid(row=0, column=2, sticky="e", padx=(8, 4))
 
         # Refresh button
         ctk.CTkButton(
@@ -1251,7 +1294,7 @@ class MediaCopierUI(ctk.CTk):
             text="Actualizar pedidos",
             width=150,
             command=self._on_refresh_techaura_orders,
-        ).grid(row=0, column=1, sticky="e", padx=4)
+        ).grid(row=0, column=3, sticky="e", padx=4)
 
         # Orders list frame (left side)
         orders_list_frame = ctk.CTkFrame(self._techaura_panel)
@@ -1287,9 +1330,22 @@ class MediaCopierUI(ctk.CTk):
         details_frame.grid_rowconfigure(1, weight=1)
         details_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(details_frame, text="Detalles del pedido:", font=("Arial", 14)).grid(
-            row=0, column=0, sticky="w", padx=8, pady=(8, 4)
+        # Details header with estimated time
+        details_header_frame = ctk.CTkFrame(details_frame, fg_color="transparent")
+        details_header_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        details_header_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(details_header_frame, text="Detalles del pedido:", font=("Arial", 14)).grid(
+            row=0, column=0, sticky="w"
         )
+
+        self._estimated_time_label = ctk.CTkLabel(
+            details_header_frame,
+            text="",
+            font=("Arial", 11),
+            text_color="#9aa0a6",
+        )
+        self._estimated_time_label.grid(row=0, column=1, sticky="e")
 
         self._techaura_details_text = ctk.CTkTextbox(details_frame, wrap="word", height=100)
         self._techaura_details_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
@@ -1315,6 +1371,192 @@ class MediaCopierUI(ctk.CTk):
             command=self._on_confirm_and_burn_order,
         ).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
 
+    def _start_auto_refresh(self) -> None:
+        """Start auto-refresh timer for TechAura orders."""
+        if self._auto_refresh_enabled and self._auto_refresh_after_id is None:
+            self._auto_refresh_after_id = self.after(
+                AUTO_REFRESH_INTERVAL_MS, self._auto_refresh_tick
+            )
+
+    def _stop_auto_refresh(self) -> None:
+        """Stop auto-refresh timer."""
+        if self._auto_refresh_after_id is not None:
+            self.after_cancel(self._auto_refresh_after_id)
+            self._auto_refresh_after_id = None
+
+    def _auto_refresh_tick(self) -> None:
+        """Auto-refresh timer tick."""
+        self._auto_refresh_after_id = None
+
+        if self._auto_refresh_enabled:
+            self._on_refresh_techaura_orders()
+            # Schedule next refresh
+            self._auto_refresh_after_id = self.after(
+                AUTO_REFRESH_INTERVAL_MS, self._auto_refresh_tick
+            )
+
+    def _on_toggle_auto_refresh(self) -> None:
+        """Toggle auto-refresh setting."""
+        self._auto_refresh_enabled = self._auto_refresh_var.get()
+        if self._auto_refresh_enabled:
+            self._start_auto_refresh()
+            self._log(LogLevel.INFO, "Auto-refresh activado (cada 30 segundos)")
+        else:
+            self._stop_auto_refresh()
+            self._log(LogLevel.INFO, "Auto-refresh desactivado")
+
+    def _update_connection_status(self, connected: bool) -> None:
+        """Update the TechAura connection status indicator."""
+        self._techaura_connected = connected
+        if connected:
+            self._connection_indicator.configure(text_color="#34a853")  # Green
+            self._connection_status_label.configure(
+                text="Conectado", text_color="#34a853"
+            )
+        else:
+            self._connection_indicator.configure(text_color="#ea4335")  # Red
+            self._connection_status_label.configure(
+                text="Desconectado", text_color="#ea4335"
+            )
+
+    def _check_and_notify_new_orders(self, new_order_count: int) -> None:
+        """Check if there are new orders and show notification."""
+        if new_order_count > self._previous_order_count and self._previous_order_count > 0:
+            new_count = new_order_count - self._previous_order_count
+            self._show_new_order_notification(new_count)
+        self._previous_order_count = new_order_count
+
+    def _show_new_order_notification(self, count: int) -> None:
+        """Show notification for new orders."""
+        message = f"¡{count} nuevo{'s' if count > 1 else ''} pedido{'s' if count > 1 else ''}!"
+        self._log(LogLevel.OK, message)
+        # Optionally show a popup notification
+        self._show_notification_popup(message)
+
+    def _show_notification_popup(self, message: str) -> None:
+        """Show a popup notification that auto-closes."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("Nuevo Pedido")
+        popup.geometry("300x100")
+        popup.transient(self)
+        popup.attributes("-topmost", True)
+
+        # Center the popup
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - popup.winfo_width()) // 2
+        y = self.winfo_y() + 100
+        popup.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(
+            popup,
+            text=message,
+            font=("Arial", 14, "bold"),
+            text_color="#34a853",
+        ).pack(pady=20)
+
+        ctk.CTkButton(
+            popup, text="OK", command=popup.destroy, width=80
+        ).pack(pady=10)
+
+        # Auto-close after 5 seconds
+        popup.after(5000, popup.destroy)
+
+    def _update_estimated_time(self, order: Optional[USBOrder] = None) -> None:
+        """Update the estimated recording time display."""
+        if order is None or not hasattr(self, "_estimated_time_label"):
+            return
+
+        # Calculate estimated time based on content type and items
+        estimated_minutes = 0
+        if order.product_type == "music":
+            # Rough estimate: 2 minutes per genre/artist for music
+            estimated_minutes = (len(order.genres) + len(order.artists)) * 2
+        elif order.product_type == "videos":
+            # Rough estimate: 5 minutes per video
+            estimated_minutes = len(order.videos) * 5
+        elif order.product_type == "movies":
+            # Rough estimate: 10 minutes per movie
+            estimated_minutes = len(order.movies) * 10
+
+        if estimated_minutes > 0:
+            if estimated_minutes >= 60:
+                hours = estimated_minutes // 60
+                mins = estimated_minutes % 60
+                time_str = f"~{hours}h {mins}m"
+            else:
+                time_str = f"~{estimated_minutes}m"
+            self._estimated_time_label.configure(text=f"Tiempo estimado: {time_str}")
+        else:
+            self._estimated_time_label.configure(text="")
+
+    def _show_cancel_confirmation(self) -> bool:
+        """Show confirmation dialog before canceling in-progress recording.
+
+        Returns:
+            True if user confirms cancellation, False otherwise.
+        """
+        if not self._recording_in_progress:
+            return True
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Confirmar Cancelación")
+        dialog.geometry("400x200")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        result = {"confirmed": False}
+
+        ctk.CTkLabel(
+            dialog,
+            text="⚠️ Grabación en progreso",
+            font=("Arial", 16, "bold"),
+            text_color="#fbbc05",
+        ).pack(pady=(20, 10))
+
+        ctk.CTkLabel(
+            dialog,
+            text="¿Estás seguro de que deseas cancelar la grabación actual?\n"
+            "El progreso actual se perderá.",
+            font=("Arial", 12),
+            wraplength=350,
+        ).pack(pady=10)
+
+        buttons_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons_frame.pack(pady=20)
+
+        def on_cancel() -> None:
+            result["confirmed"] = False
+            dialog.destroy()
+
+        def on_confirm() -> None:
+            result["confirmed"] = True
+            dialog.destroy()
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="No, continuar",
+            fg_color="#34a853",
+            hover_color="#2d9148",
+            command=on_cancel,
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="Sí, cancelar",
+            fg_color="#ea4335",
+            hover_color="#c5221f",
+            command=on_confirm,
+        ).pack(side="left", padx=10)
+
+        dialog.wait_window()
+        return result["confirmed"]
+
     def _on_refresh_techaura_orders(self) -> None:
         """Actualizar lista de pedidos de TechAura."""
         if self._order_processor is None:
@@ -1323,6 +1565,7 @@ class MediaCopierUI(ctk.CTk):
 
         if self._order_processor is None:
             self._log(LogLevel.WARN, "No se pudo inicializar el procesador TechAura.")
+            self._update_connection_status(False)
             return
 
         try:
@@ -1334,10 +1577,16 @@ class MediaCopierUI(ctk.CTk):
                     self._techaura_orders.append(pending.order)
 
             self._refresh_techaura_orders_list()
+            self._update_connection_status(True)
+            self._check_and_notify_new_orders(len(self._techaura_orders))
             self._log(
                 LogLevel.INFO, f"Se encontraron {len(self._techaura_orders)} pedidos pendientes."
             )
+        except CircuitBreakerOpen:
+            self._update_connection_status(False)
+            self._log(LogLevel.WARN, "Circuit breaker abierto. Esperando para reconectar...")
         except Exception as e:
+            self._update_connection_status(False)
             self._log(LogLevel.ERROR, f"Error al obtener pedidos: {str(e)}")
 
     def _init_techaura_processor(self) -> None:
@@ -1409,6 +1658,7 @@ class MediaCopierUI(ctk.CTk):
         if self._selected_order_id is None:
             self._techaura_details_text.insert("1.0", "Selecciona un pedido para ver detalles.")
             self._techaura_details_text.configure(state="disabled")
+            self._update_estimated_time(None)
             return
 
         # Find the selected order
@@ -1421,6 +1671,7 @@ class MediaCopierUI(ctk.CTk):
         if order is None:
             self._techaura_details_text.insert("1.0", "Pedido no encontrado.")
             self._techaura_details_text.configure(state="disabled")
+            self._update_estimated_time(None)
             return
 
         # Build details text
@@ -1446,6 +1697,9 @@ class MediaCopierUI(ctk.CTk):
         self._techaura_details_text.insert("1.0", details)
         self._techaura_details_text.configure(state="disabled")
 
+        # Update estimated time
+        self._update_estimated_time(order)
+
     def _on_view_order_details(self) -> None:
         """Ver detalles completos del pedido seleccionado."""
         if self._selected_order_id is None:
@@ -1456,6 +1710,11 @@ class MediaCopierUI(ctk.CTk):
 
     def _on_confirm_and_burn_order(self) -> None:
         """Confirmar y comenzar grabación del pedido seleccionado."""
+        # Check for recording in progress
+        if self._recording_in_progress:
+            if not self._show_cancel_confirmation():
+                return
+
         if self._selected_order_id is None:
             self._log(LogLevel.WARN, "Selecciona un pedido primero.")
             return
