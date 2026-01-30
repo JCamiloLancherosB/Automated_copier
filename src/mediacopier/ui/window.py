@@ -102,6 +102,9 @@ class MediaCopierUI(ctk.CTk):
         self._refresh_usb_drives()
         self._start_auto_refresh()
         self._log(LogLevel.INFO, "UI lista para crear jobs.")
+        
+        # Verificar conexión con TechAura después de 1 segundo
+        self.after(1000, self._initial_connection_check)
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1, uniform="cols")
@@ -1302,6 +1305,16 @@ class MediaCopierUI(ctk.CTk):
             command=self._on_refresh_techaura_orders,
         ).grid(row=0, column=3, sticky="e", padx=4)
 
+        # Reconnect button
+        self._reconnect_btn = ctk.CTkButton(
+            header_frame,
+            text="🔄 Reconectar",
+            width=100,
+            fg_color="#666666",
+            command=self._on_reconnect,
+        )
+        self._reconnect_btn.grid(row=0, column=4, sticky="e", padx=4)
+
         # Orders list frame (left side)
         orders_list_frame = ctk.CTkFrame(self._techaura_panel)
         orders_list_frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 12))
@@ -1410,6 +1423,37 @@ class MediaCopierUI(ctk.CTk):
         else:
             self._stop_auto_refresh()
             self._log(LogLevel.INFO, "Auto-refresh desactivado")
+
+    def _initial_connection_check(self) -> None:
+        """Verificar conexión con TechAura al iniciar."""
+        self._log(LogLevel.INFO, "Verificando conexión con TechAura...")
+        
+        if self._techaura_client is None:
+            self._init_techaura_processor()
+        
+        if self._techaura_client is not None:
+            try:
+                connected = self._techaura_client.check_connection()
+                self._update_connection_status(connected)
+                if connected:
+                    self._log(LogLevel.OK, "✅ Conexión con TechAura establecida")
+                    # Cargar pedidos automáticamente
+                    self._on_refresh_techaura_orders()
+                else:
+                    self._log(
+                        LogLevel.WARN,
+                        "⚠️ No se pudo conectar con TechAura. "
+                        "Verifica que el chatbot esté corriendo.",
+                    )
+            except Exception as e:
+                self._update_connection_status(False)
+                self._log(LogLevel.ERROR, f"Error al verificar conexión: {str(e)}")
+        else:
+            self._update_connection_status(False)
+            self._log(
+                LogLevel.WARN,
+                "⚠️ Cliente TechAura no configurado. Verifica las variables de entorno.",
+            )
 
     def _update_connection_status(self, connected: bool) -> None:
         """Update the TechAura connection status indicator."""
@@ -1562,6 +1606,17 @@ class MediaCopierUI(ctk.CTk):
 
         dialog.wait_window()
         return result["confirmed"]
+
+    def _on_reconnect(self) -> None:
+        """Intentar reconectar con TechAura."""
+        self._log(LogLevel.INFO, "Intentando reconectar...")
+        
+        # Reiniciar el cliente
+        self._techaura_client = None
+        self._order_processor = None
+        
+        # Reintentar conexión
+        self._initial_connection_check()
 
     def _on_refresh_techaura_orders(self) -> None:
         """Actualizar lista de pedidos de TechAura."""

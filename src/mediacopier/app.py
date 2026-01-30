@@ -59,7 +59,29 @@ def main() -> None:
             return
 
     # Normal mode - run GUI (import here to avoid tkinter requirement for CLI)
+    import os
+
+    from mediacopier.config.settings import get_settings
     from mediacopier.ui.window import run_window
+
+    # Show current configuration
+    settings = get_settings()
+    print("=" * 50)
+    print("🔧 Configuración TechAura:")
+    print(f"   API URL: {settings.techaura.api_url or 'No configurada'}")
+    print(f"   API Key: {'✓ Configurada' if settings.techaura.api_key else '✗ No configurada'}")
+    print("   Content Sources:")
+    
+    content_sources = {
+        "music": settings.content.music_path,
+        "videos": settings.content.videos_path,
+        "movies": settings.content.movies_path,
+    }
+    
+    for tipo, path in content_sources.items():
+        exists = "✓" if path and os.path.isdir(path) else "✗"
+        print(f"      {tipo}: {path or 'No configurada'} [{exists}]")
+    print("=" * 50)
 
     run_window()
 
