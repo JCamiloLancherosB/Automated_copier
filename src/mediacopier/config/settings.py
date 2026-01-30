@@ -4,14 +4,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    # Fallback if python-dotenv is not installed
-    def load_dotenv() -> None:
-        """Dummy function if dotenv is not available."""
-        pass
-
 
 @dataclass
 class TechAuraSettings:
@@ -34,9 +26,6 @@ class TechAuraSettings:
 
     def __post_init__(self) -> None:
         """Inicializa valores desde variables de entorno si no se proporcionan."""
-        # Load .env file first
-        load_dotenv()
-        
         if not self.api_url:
             self.api_url = os.getenv("TECHAURA_API_URL", "http://localhost:3006")
         if not self.api_key:
@@ -119,9 +108,6 @@ class ContentSettings:
 
     def __post_init__(self) -> None:
         """Inicializa valores desde variables de entorno si no se proporcionan."""
-        # Load .env file first
-        load_dotenv()
-        
         if not self.music_path:
             self.music_path = os.getenv("CONTENT_PATH_MUSIC", "")
         if not self.videos_path:
