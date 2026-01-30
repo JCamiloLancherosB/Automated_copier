@@ -10,6 +10,7 @@ from typing import Optional
 import customtkinter as ctk
 
 from mediacopier.api.techaura_client import CircuitBreakerOpen, TechAuraClient, USBOrder
+from mediacopier.config.settings import load_ui_state, save_ui_state
 from mediacopier.core.copier import CopyItemAction, CopyPlan, CopyPlanItem
 from mediacopier.core.models import CopyRules, OrganizationMode, Profile, ProfileManager
 from mediacopier.core.runner import (
@@ -32,11 +33,10 @@ from mediacopier.integration.order_processor import (
     OrderProcessorConfig,
     TechAuraOrderProcessor,
 )
-from mediacopier.ui.job_queue import JobQueue, JobStatus
-from mediacopier.ui.styles import Colors, Emojis, Fonts
-from mediacopier.ui.components import Toast, StatusBar, Tooltip
+from mediacopier.ui.components import StatusBar, Toast, Tooltip
 from mediacopier.ui.dialogs import ConfirmationDialog
-from mediacopier.config.settings import load_ui_state, save_ui_state, UIState
+from mediacopier.ui.job_queue import JobQueue, JobStatus
+from mediacopier.ui.styles import Colors, Emojis
 
 
 class LogLevel:
@@ -695,9 +695,15 @@ class MediaCopierUI(ctk.CTk):
                 f"Errores: {failed}, Tamaño: {size_str}",
             )
             if failed > 0:
-                Toast.show(self, f"{Emojis.WARNING} Grabación completada con errores", Toast.WARNING)
+                Toast.show(
+                    self, f"{Emojis.WARNING} Grabación completada con errores", Toast.WARNING
+                )
             else:
-                Toast.show(self, f"{Emojis.SUCCESS} Grabación completada exitosamente", Toast.SUCCESS)
+                Toast.show(
+                    self,
+                    f"{Emojis.SUCCESS} Grabación completada exitosamente",
+                    Toast.SUCCESS,
+                )
 
     def enqueue_ui(self, callback: Callable[[], None]) -> None:
         self._ui_queue.append(callback)
@@ -1001,7 +1007,11 @@ class MediaCopierUI(ctk.CTk):
         if not self._detected_usb_drives:
             self._log(LogLevel.WARN, "No se detectaron unidades USB conectadas.")
         else:
-            Toast.show(self, f"{Emojis.USB} {len(self._detected_usb_drives)} USB detectadas", Toast.INFO)
+            Toast.show(
+                self,
+                f"{Emojis.USB} {len(self._detected_usb_drives)} USB detectadas",
+                Toast.INFO,
+            )
 
     def _on_usb_selected(self, selection: str) -> None:
         """Handle USB drive selection from dropdown."""
@@ -1735,12 +1745,16 @@ class MediaCopierUI(ctk.CTk):
             # Product type
             type_label = ctk.CTkLabel(self._techaura_orders_table, text=order.product_type)
             type_label.grid(row=row, column=2, sticky="w", padx=4, pady=2)
-            type_label.bind("<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid))
+            type_label.bind(
+                "<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid)
+            )
             
             # USB capacity
             capacity_label = ctk.CTkLabel(self._techaura_orders_table, text=order.capacity)
             capacity_label.grid(row=row, column=3, sticky="w", padx=4, pady=2)
-            capacity_label.bind("<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid))
+            capacity_label.bind(
+                "<Button-1>", lambda e, oid=order.order_id: self._on_select_order(oid)
+            )
 
     def _on_select_order(self, order_id: str) -> None:
         """Seleccionar un pedido de la lista."""
