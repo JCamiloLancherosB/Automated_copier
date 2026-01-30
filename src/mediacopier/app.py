@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import os
 from typing import Any
@@ -45,39 +46,36 @@ def main() -> None:
             print(f"Sample movie requests: {', '.join(info['movie_requests'][:3])}...")
             return
 
-    # Normal mode - run GUI with TechAura integration
-    from mediacopier.ui.window import MediaCopierUI
+    # Normal mode - run GUI (import here to avoid tkinter requirement for CLI)
+    from mediacopier.config.settings import get_settings
+    from mediacopier.ui.window import run_window
 
-    app = MediaCopierUI()
-    
-    # ========================================
-    # 🔧 CONFIGURACIÓN DE TECHAURA INTEGRATION
-    # ========================================
-    # Las rutas se toman de variables de entorno o usan defaults vacíos
-    content_sources = {
-        "music": os.environ.get("CONTENT_PATH_MUSIC", ""),
-        "videos": os.environ.get("CONTENT_PATH_VIDEOS", ""),
-        "movies": os.environ.get("CONTENT_PATH_MOVIES", ""),
-    }
-    
-    # Solo configurar si las variables de entorno están definidas
-    api_url = os.environ.get("TECHAURA_API_URL")
-    api_key = os.environ.get("TECHAURA_API_KEY")
-    
-    if api_url and api_key:
-        print(f"🔗 Configurando integración TechAura: {api_url}")
-        # Filtrar solo los paths que existen
-        valid_sources = {k: v for k, v in content_sources.items() if v and os.path.isdir(v)}
-        if valid_sources:
-            app.setup_techaura_integration(content_sources=valid_sources)
-            print(f"✅ Fuentes de contenido configuradas: {list(valid_sources.keys())}")
-        else:
-            print("⚠️ No se encontraron rutas de contenido válidas en las variables de entorno")
-    else:
-        print("⚠️ Integración TechAura no configurada (falta TECHAURA_API_URL o TECHAURA_API_KEY)")
-        print("   Ejecutando en modo standalone...")
-    
-    app.mainloop()
+    # Show current configuration
+    try:
+        settings = get_settings()
+        print("=" * 50)
+        print("🔧 Configuración TechAura:")
+        print(f"   API URL: {settings.techaura.api_url or 'No configurada'}")
+        print(
+            f"   API Key: {'✓ Configurada' if settings.techaura.api_key else '✗ No configurada'}"
+        )
+        print("   Content Sources:")
+
+        content_sources = {
+            "music": settings.content.music_path,
+            "videos": settings.content.videos_path,
+            "movies": settings.content.movies_path,
+        }
+
+        for tipo, path in content_sources.items():
+            exists = "✓" if path and os.path.isdir(path) else "✗"
+            print(f"      {tipo}: {path or 'No configurada'} [{exists}]")
+        print("=" * 50)
+    except Exception as e:
+        print(f"⚠️ Error al mostrar configuración: {e}")
+        print("=" * 50)
+
+    run_window()
 
 
 if __name__ == "__main__":
