@@ -123,6 +123,9 @@ class MediaCopierUI(ctk.CTk):
         self._log_entries: list[tuple[str, str, str]] = []  # (timestamp, level, message)
         self._log_filter_var: Optional[ctk.StringVar] = None
         self._max_log_entries: int = 1000
+        
+        # Organization system
+        self._pending_playlist: Optional[tuple] = None
 
         self._build_layout()
         self._start_ui_queue()
@@ -219,7 +222,8 @@ class MediaCopierUI(ctk.CTk):
 
         self._right_panel = ctk.CTkFrame(self)
         self._right_panel.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=12, pady=12)
-        self._right_panel.grid_rowconfigure(1, weight=1)
+        self._right_panel.grid_rowconfigure(1, weight=2)
+        self._right_panel.grid_rowconfigure(2, weight=1)
 
         self._queue_panel = ctk.CTkFrame(self)
         self._queue_panel.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 6))
@@ -598,7 +602,64 @@ class MediaCopierUI(ctk.CTk):
         ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
 
         self._names_text = ctk.CTkTextbox(self._right_panel, wrap="none")
-        self._names_text.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        self._names_text.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 8))
+        
+        # Add organization options panel
+        self._build_organization_options()
+
+    def _build_organization_options(self) -> None:
+        """Construir panel de opciones de organización."""
+        options_frame = ctk.CTkScrollableFrame(self._right_panel, height=300)
+        options_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 16))
+        
+        ctk.CTkLabel(
+            options_frame, 
+            text="📁 Organización de Archivos", 
+            font=("Arial", 14, "bold")
+        ).pack(anchor="w", pady=(0, 8))
+        
+        # Modo de ordenamiento
+        self._sort_mode_var = ctk.StringVar(value="original")
+        
+        modes = [
+            ("original", "Orden original"),
+            ("interleave_genre", "Intercalar por géneros"),
+            ("shuffle", "Aleatorio"),
+            ("alphabetical", "Alfabético (A-Z)"),
+            ("alphabetical_desc", "Alfabético (Z-A)"),
+            ("by_artist", "Agrupar por artista"),
+            ("by_year", "Ordenar por año"),
+        ]
+        
+        for value, label in modes:
+            ctk.CTkRadioButton(
+                options_frame, 
+                text=label, 
+                variable=self._sort_mode_var,
+                value=value
+            ).pack(anchor="w", pady=2)
+        
+        # Opciones adicionales
+        self._enumerate_files_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            options_frame, 
+            text="Enumerar archivos (001, 002, ...)",
+            variable=self._enumerate_files_var
+        ).pack(anchor="w", pady=4)
+        
+        self._normalize_names_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            options_frame,
+            text="Normalizar nombres (quitar caracteres especiales)",
+            variable=self._normalize_names_var
+        ).pack(anchor="w", pady=4)
+        
+        self._create_playlist_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            options_frame,
+            text="Crear archivo playlist (.m3u)",
+            variable=self._create_playlist_var
+        ).pack(anchor="w", pady=4)
 
     def _build_queue_panel(self) -> None:
         ctk.CTkLabel(self._queue_panel, text="Cola de trabajos", font=("Arial", 18, "bold")).grid(
@@ -790,6 +851,23 @@ class MediaCopierUI(ctk.CTk):
                 f"Job completado - Copiados: {copied}, Omitidos: {skipped}, "
                 f"Errores: {failed}, Tamaño: {size_str}",
             )
+            
+            # Create playlist if pending and no errors
+            if self._pending_playlist and failed == 0:
+                from mediacopier.core.file_organizer import FileOrganizer
+                playlist_files, playlist_path = self._pending_playlist
+                organizer = FileOrganizer()
+                try:
+                    success = organizer.create_playlist(playlist_files, str(playlist_path))
+                    if success:
+                        self._log(LogLevel.OK, f"✓ Playlist creada: {playlist_path.name}")
+                    else:
+                        self._log(LogLevel.WARN, f"⚠️ No se pudo crear playlist: {playlist_path.name}")
+                except Exception as e:
+                    self._log(LogLevel.ERROR, f"Error al crear playlist: {e}")
+                finally:
+                    self._pending_playlist = None
+            
             if failed > 0:
                 Toast.show(
                     self, f"{Emojis.WARNING} Grabación completada con errores", Toast.WARNING
@@ -1389,26 +1467,99 @@ class MediaCopierUI(ctk.CTk):
             self._show_error("Especifica origen y destino")
             return None
 
-        # For now, create a simple plan with the items as file paths
-        # In a real implementation, this would use the matcher to find files
-        items = []
-        total_bytes = 0
+        # Import FileOrganizer and SortMode
+        from mediacopier.core.file_organizer import FileOrganizer, MusicFile, SortMode
 
+        # Create organizer and add files
+        organizer = FileOrganizer()
+        
         for item_text in job.items:
             # Check if item_text is a file path
             item_path = Path(item_text)
-            if item_path.exists() and item_path.is_file():
-                size = item_path.stat().st_size
-                dest_path = Path(dest) / item_path.name
-                items.append(
-                    CopyPlanItem(
-                        source=str(item_path),
-                        destination=str(dest_path),
-                        action=CopyItemAction.COPY,
-                        size=size,
-                    )
+            if item_path.exists():
+                if item_path.is_file():
+                    # Add single file
+                    organizer.add_file(MusicFile(
+                        path=str(item_path),
+                        filename=item_path.name,
+                        genre="",
+                        artist="",
+                        year=""
+                    ))
+                elif item_path.is_dir():
+                    # Add files from directory with genre as directory name
+                    genre = item_path.name
+                    organizer.add_files_from_directory(str(item_path), genre)
+
+        # Get organization settings
+        try:
+            sort_mode = SortMode(self._sort_mode_var.get())
+        except (ValueError, AttributeError):
+            sort_mode = SortMode.ORIGINAL
+
+        enumerate_files = getattr(self, '_enumerate_files_var', None)
+        enumerate_files = enumerate_files.get() if enumerate_files else True
+        
+        normalize_names = getattr(self, '_normalize_names_var', None)
+        normalize_names = normalize_names.get() if normalize_names else True
+        
+        create_playlist = getattr(self, '_create_playlist_var', None)
+        create_playlist = create_playlist.get() if create_playlist else False
+
+        # Organize files according to selected mode
+        organized = organizer.organize(sort_mode)
+
+        # Create copy plan items with organized order and formatted names
+        items = []
+        total_bytes = 0
+        playlist_files = []
+        seen_filenames = set()
+
+        for index, music_file in organized:
+            source_path = Path(music_file.path)
+            if not source_path.exists():
+                continue
+            
+            try:
+                size = source_path.stat().st_size
+            except OSError as e:
+                self._log(LogLevel.WARN, f"No se pudo leer {source_path.name}: {e}")
+                continue
+            
+            # Format filename with enumeration and normalization
+            new_filename = organizer.format_filename(
+                index, music_file, enumerate_files, normalize_names
+            )
+            
+            # Check for duplicate filenames
+            if new_filename in seen_filenames:
+                self._log(
+                    LogLevel.WARN,
+                    f"Archivo duplicado detectado: {new_filename} (se omitirá)"
                 )
-                total_bytes += size
+                continue
+            seen_filenames.add(new_filename)
+            
+            dest_path = Path(dest) / new_filename
+            
+            items.append(
+                CopyPlanItem(
+                    source=str(source_path),
+                    destination=str(dest_path),
+                    action=CopyItemAction.COPY,
+                    size=size,
+                )
+            )
+            total_bytes += size
+            playlist_files.append((index, new_filename))
+
+        # Check if any files were found
+        if len(items) == 0:
+            self._log(
+                LogLevel.WARN,
+                "No se encontraron archivos de audio válidos para organizar."
+            )
+            return None
 
         plan = CopyPlan(
             items=items,
@@ -1416,6 +1567,13 @@ class MediaCopierUI(ctk.CTk):
             files_to_copy=len(items),
             files_to_skip=0,
         )
+
+        # Create playlist if enabled (will be created after copy, this is just preparation)
+        if create_playlist and len(playlist_files) > 0:
+            # Note: Playlist will be created after successful copy
+            self._pending_playlist = (playlist_files, Path(dest) / "playlist.m3u")
+        else:
+            self._pending_playlist = None
 
         return plan
 
