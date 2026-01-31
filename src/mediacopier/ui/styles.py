@@ -53,16 +53,27 @@ class Emojis:
     # Content types
     MUSIC = "🎵"
     VIDEOS = "🎬"
+    VIDEO = "🎬"  # Alias for VIDEOS
     MOVIES = "🎥"
+    MOVIE = "🎥"  # Alias for MOVIES
     
     # Info indicators
     ORDER_NUMBER = "📋"
+    ORDER = "📋"  # Alias for ORDER_NUMBER
     CUSTOMER = "👤"
+    CLIENT = "👤"  # Alias for CUSTOMER
+    PHONE = "📞"
     CAPACITY = "💾"
     GENRES = "🎶"
     ARTISTS = "🎤"
     DATE = "📅"
+    CLOCK = "🕐"  # Alias for DATE/time
     USB = "💿"
+    
+    # Actions
+    PLAY = "▶️"
+    STOP = "⏹️"
+    PAUSE = "⏸️"
     
     # Status
     CONNECTED = "🟢"

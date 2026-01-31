@@ -12,6 +12,12 @@ from mediacopier.ui.styles import Colors, Fonts, Styles
 class Toast(ctk.CTkToplevel):
     """Toast notification component."""
     
+    # Toast type constants for backward compatibility
+    SUCCESS = "success"
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+    
     def __init__(
         self,
         parent: ctk.CTk,
@@ -76,6 +82,23 @@ class Toast(ctk.CTkToplevel):
     def _fade_out(self) -> None:
         """Fade out and destroy toast."""
         self.destroy()
+    
+    @staticmethod
+    def show(
+        parent: ctk.CTk,
+        message: str,
+        type: str = "info",
+        duration: int = Styles.TOAST_DURATION_MS,
+    ) -> None:
+        """Static method to show a toast notification.
+        
+        Args:
+            parent: Parent window.
+            message: Message to display.
+            type: Toast type (info, success, warning, error).
+            duration: Duration in milliseconds before auto-closing.
+        """
+        Toast(parent, message, type, duration)
 
 
 class StatusBar(ctk.CTkFrame):
