@@ -12,6 +12,7 @@ import customtkinter as ctk
 from mediacopier.api.techaura_client import CircuitBreakerOpen, TechAuraClient, USBOrder
 from mediacopier.config.settings import load_ui_state, save_ui_state
 from mediacopier.core.copier import CopyItemAction, CopyPlan, CopyPlanItem
+from mediacopier.core.duplicate_detector import DuplicateDetector, DuplicateMethod
 from mediacopier.core.models import CopyRules, OrganizationMode, Profile, ProfileManager
 from mediacopier.core.runner import (
     JobRunnerManager,
@@ -552,6 +553,56 @@ class MediaCopierUI(ctk.CTk):
         )
         row += 1
 
+        # Section: Duplicate Detection
+        ctk.CTkLabel(
+            self._left_panel, text="🔍 Detección de Duplicados", font=("Arial", 16, "bold")
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(12, 8))
+        row += 1
+
+        # Detect duplicates checkbox
+        self._detect_duplicates_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            self._left_panel,
+            text="Detectar y omitir duplicados",
+            variable=self._detect_duplicates_var,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
+        row += 1
+
+        # Detection method radio buttons
+        ctk.CTkLabel(self._left_panel, text="Método de detección:").grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(4, 4)
+        )
+        row += 1
+
+        self._dup_method_var = ctk.StringVar(value="smart")
+        methods = [
+            ("smart", "Detección inteligente (recomendado)"),
+            ("by_hash", "Por contenido exacto (lento pero preciso)"),
+            ("by_name", "Por nombre de archivo (rápido)"),
+            ("by_metadata", "Por metadata ID3 (artista + título)"),
+        ]
+
+        for value, label in methods:
+            ctk.CTkRadioButton(
+                self._left_panel, text=label, variable=self._dup_method_var, value=value
+            ).grid(row=row, column=0, columnspan=2, sticky="w", padx=32, pady=2)
+            row += 1
+
+        # Scan duplicates button
+        ctk.CTkButton(
+            self._left_panel, text="🔍 Escanear Duplicados", command=self._scan_duplicates
+        ).grid(row=row, column=0, columnspan=2, sticky="ew", padx=16, pady=8)
+        row += 1
+
+        # Duplicates result label
+        self._duplicates_result_label = ctk.CTkLabel(
+            self._left_panel, text="", wraplength=400
+        )
+        self._duplicates_result_label.grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8)
+        )
+        row += 1
+
         # Error message label
         self._error_label = ctk.CTkLabel(
             self._left_panel, text="", text_color="#ea4335", wraplength=400
@@ -564,6 +615,63 @@ class MediaCopierUI(ctk.CTk):
 
     def _on_fuzzy_slider_change(self, value: float) -> None:
         self._fuzzy_label.configure(text=f"{int(value)}%")
+
+    def _scan_duplicates(self) -> None:
+        """Escanear archivos seleccionados por duplicados."""
+        # Check if duplicate detection is enabled
+        if not self._detect_duplicates_var.get():
+            self._log(LogLevel.INFO, "Detección de duplicados desactivada")
+            self._duplicates_result_label.configure(text="")
+            return
+
+        items = self._read_items()
+        if not items:
+            self._log(LogLevel.WARN, "No hay archivos en la lista para escanear")
+            self._duplicates_result_label.configure(text="")
+            return
+
+        # Filter only file paths (items that look like file paths)
+        source = self._source_entry.get().strip()
+        files = []
+        for item in items:
+            item_path = Path(item)
+            # Check if absolute path exists
+            if item_path.exists() and item_path.is_file():
+                files.append(str(item_path))
+            # Check relative to source
+            elif source:
+                full_path = Path(source) / item
+                if full_path.exists() and full_path.is_file():
+                    files.append(str(full_path))
+
+        if not files:
+            self._log(
+                LogLevel.WARN,
+                "No se encontraron archivos válidos para escanear. "
+                "Asegúrate de que la lista contenga rutas de archivos válidas.",
+            )
+            self._duplicates_result_label.configure(text="")
+            return
+
+        self._log(LogLevel.INFO, f"Escaneando {len(files)} archivos por duplicados...")
+
+        detector = DuplicateDetector()
+        method = DuplicateMethod(self._dup_method_var.get())
+        duplicates = detector.find_duplicates(files, method)
+
+        report = detector.generate_report(duplicates)
+        self._log(LogLevel.INFO, report)
+
+        total_dups = sum(len(g.duplicates) for g in duplicates)
+        if total_dups > 0:
+            self._duplicates_result_label.configure(
+                text=f"⚠️ Encontrados: {total_dups} duplicados en {len(duplicates)} grupos",
+                text_color="#f59e0b",
+            )
+        else:
+            self._duplicates_result_label.configure(
+                text="✅ No se encontraron duplicados", text_color="#10b981"
+            )
 
     def _build_action_buttons(self, start_row: int) -> None:
         button_frame = ctk.CTkFrame(self._left_panel)
