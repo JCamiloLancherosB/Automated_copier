@@ -39,6 +39,7 @@ from mediacopier.persistence import JobStorage, StatsStorage
 from mediacopier.ui.components import StatusBar, Toast, Tooltip
 from mediacopier.ui.dialogs import ConfirmationDialog
 from mediacopier.ui.job_queue import JobQueue, JobStatus
+from mediacopier.ui.settings_dialog import SettingsDialog
 from mediacopier.ui.styles import Colors, Emojis
 
 
